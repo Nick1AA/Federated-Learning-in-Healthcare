@@ -8,7 +8,7 @@ import logging
 import torchvision
 import torchvision.transforms as transforms
 import torch.utils.data as data
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import confusion_matrix, multilabel_confusion_matrix
 
 # we've changed to a faster solver
 #from scipy.optimize import linear_sum_assignment
@@ -17,7 +17,7 @@ import logging
 from torch.autograd import Variable
 import torch.nn.functional as F
 import torch.nn as nn
-from datasets import MNIST_truncated, CIFAR10_truncated, ImageFolderTruncated, CIFAR10ColorGrayScaleTruncated
+from datasets import MNIST_truncated, CIFAR10_truncated, ImageFolderTruncated, CIFAR10ColorGrayScaleTruncated, CheXpert_dataset
 from combine_nets import prepare_uniform_weights, prepare_sanity_weights, prepare_weight_matrix, normalize_weights, get_weighted_average_pred
 
 from vgg import *
@@ -100,15 +100,38 @@ def partition_data(dataset, datadir, logdir, partition, n_nets, alpha, args):
                                                             ]))
         y_train = trainset.get_train_labels
         n_train = y_train.shape[0]
+    elif dataset == 'chexpert':
+        X_train, y_train, X_test, y_test = load_chexpert_data(datadir) # evtl hier schon validation set einführen
+        y_train = handle_uncertainty_labels(y_train)
+        y_test = handle_uncertainty_labels(y_test)
+        n_train = X_train.shape[0]
 
+    # Note for the CheXpert dataset only partition "homo" is applicable
     if partition == "homo":
-        idxs = np.random.permutation(n_train)
-        batch_idxs = np.array_split(idxs, n_nets)
-        net_dataidx_map = {i: batch_idxs[i] for i in range(n_nets)}
+        if dataset == 'chexpert':
+            patients = list(set(y_train[0]))
+            patients = np.random.permutation(patients)
+            batch_patients = np.array_split(patients, n_nets)
 
-    elif partition == "hetero-dir":
+            batch_idxs = [] * n_nets
+
+            for i in range(n_train):
+                for n in range(n_nets):
+                    for patient in batch_patients[n]:
+                        if patient == y_train[i]:
+                            batch_idxs[n].append(i)
+            
+            net_dataidx_map = {i: batch_idxs[i] for i in range(n_nets)}
+
+        else:
+            idxs = np.random.permutation(n_train)
+            batch_idxs = np.array_split(idxs, n_nets)
+            net_dataidx_map = {i: batch_idxs[i] for i in range(n_nets)}
+
+    elif partition == "hetero-dir" and dataset != 'chexpert':
         min_size = 0
         K = 10
+        
         N = y_train.shape[0]
         net_dataidx_map = {}
 
@@ -130,7 +153,7 @@ def partition_data(dataset, datadir, logdir, partition, n_nets, alpha, args):
             np.random.shuffle(idx_batch[j])
             net_dataidx_map[j] = idx_batch[j]
 
-    elif partition == "hetero-fbs":
+    elif partition == "hetero-fbs" and dataset != 'chexpert':
         # in this part we conduct a experimental study on exploring the effect of increasing the number of batches
         # but the number of data points are approximately fixed for each batch
         # the arguments we need to use here are: `args.partition_step_size`, `args.local_points`, `args.partition_step`(step can be {0, 1, ..., args.partition_step_size - 1}).
@@ -148,7 +171,6 @@ def partition_data(dataset, datadir, logdir, partition, n_nets, alpha, args):
         n_batches = (args.partition_step + 1) * sub_partition_size
         min_size = 0
         K = 10
-
         #N = len(step_batch_idxs[args.step])
         baseline_indices = np.concatenate([step_batch_idxs[i] for i in range(args.partition_step + 1)])
         y_train = y_train[baseline_indices]
@@ -158,6 +180,7 @@ def partition_data(dataset, datadir, logdir, partition, n_nets, alpha, args):
             idx_batch = [[] for _ in range(n_batches)]
             # for each class in the dataset
             for k in range(K):
+            
                 idx_k = np.where(y_train == k)[0]
                 np.random.shuffle(idx_k)
                 proportions = np.random.dirichlet(np.repeat(alpha, n_batches))
@@ -209,7 +232,28 @@ def load_cifar10_data(datadir):
 
     return (X_train, y_train, X_test, y_test)
 
-def compute_accuracy(model, dataloader, get_confusion_matrix=False, device="cpu"):
+def load_chexpert_data(datadir): 
+
+    chexpert_train_ds = CheXpert_dataset(datadir, train=True, transform=True)
+    chexpert_test_ds = CheXpert_dataset(datadir, train=False, transform=True)
+
+    training_set = data.DataLoader(chexpert_train_ds, batch_size = chexpert_train_ds.__len__(), shuffle=True)
+    test_set = data.DataLoader(chexpert_test_ds, batch_size = chexpert_test_ds.__len__(), shuffle=True)
+
+    X_train, y_train = next(iter(training_set))
+    X_test, y_test = next(iter(test_set))
+
+    return (X_train, y_train, X_test, y_test)
+
+def handle_uncertainty_labels(labels):
+    # apply the U-Ones approach for the class Atelectasis, U-Multiclass approach (for Cardiomegaly) is the default approach
+    for x in labels:
+        if (x[13] == 0):
+            x[13] = 1
+    return labels
+        
+
+def compute_accuracy(model, dataloader, get_confusion_matrix=False, device="cpu", dataset=None):
 
     was_training = False
     if model.training:
@@ -221,12 +265,14 @@ def compute_accuracy(model, dataloader, get_confusion_matrix=False, device="cpu"
     correct, total = 0, 0
     with torch.no_grad():
         for batch_idx, (x, target) in enumerate(dataloader):
+            if dataset == "chexpert":
+                target = target[5:19]
             x, target = x.to(device), target.to(device)
             out = model(x)
             _, pred_label = torch.max(out.data, 1)
 
             total += x.data.size()[0]
-            correct += (pred_label == target.data).sum().item()
+            correct += (pred_label == target.data).sum().item() # hier evtl aufpassen
 
             if device == "cpu":
                 pred_labels_list = np.append(pred_labels_list, pred_label.numpy())
@@ -236,7 +282,10 @@ def compute_accuracy(model, dataloader, get_confusion_matrix=False, device="cpu"
                 true_labels_list = np.append(true_labels_list, target.data.cpu().numpy())               
 
     if get_confusion_matrix:
-        conf_matrix = confusion_matrix(true_labels_list, pred_labels_list)
+        if dataset == "chexpert":
+            conf_matrix = multilabel_confusion_matrix(true_labels_list, pred_labels_list)
+        else:
+            conf_matrix = confusion_matrix(true_labels_list, pred_labels_list)
 
     if was_training:
         model.train()
@@ -392,6 +441,13 @@ def get_dataloader(dataset, datadir, train_bs, test_bs, dataidxs=None):
             transform=transforms.Compose([transforms.ToTensor(),
             transforms.Normalize(mean=cinic_mean,std=cinic_std)])), batch_size=test_bs, shuffle=False)
 
+    elif dataset == 'chexpert':
+        training_set = CheXpert_dataset(datadir, train=True, transform=True, dataidxs=dataidxs)
+        test_set = CheXpert_dataset(datadir, train=False, transform=True)
+
+        train_dl = data.DataLoader(dataset=training_set, batch_size=train_bs, shuffle=True)
+        test_dl = data.DataLoader(dataset=test_set, batch_size=test_bs, shuffle=False)
+
     return train_dl, test_dl
 
 
@@ -452,7 +508,7 @@ def pdm_prepare_freq(cls_freqs, n_classes):
     return freqs
 
 
-def compute_ensemble_accuracy(models: list, dataloader, n_classes, train_cls_counts=None, uniform_weights=False, sanity_weights=False, device="cpu"):
+def compute_ensemble_accuracy(models: list, dataloader, n_classes, train_cls_counts=None, uniform_weights=False, sanity_weights=False, device="cpu", dataset = None):
 
     correct, total = 0, 0
     true_labels_list, pred_labels_list = np.array([]), np.array([])
@@ -474,6 +530,8 @@ def compute_ensemble_accuracy(models: list, dataloader, n_classes, train_cls_cou
 
     with torch.no_grad():
         for batch_idx, (x, target) in enumerate(dataloader):
+            if dataset == 'chexpert':
+                target = target[5:19]
             x, target = x.to(device), target.to(device)
             target = target.long()
             out = get_weighted_average_pred(models, weights_norm, x, device=device)
@@ -492,7 +550,10 @@ def compute_ensemble_accuracy(models: list, dataloader, n_classes, train_cls_cou
 
     #logger.info(correct, total)
 
-    conf_matrix = confusion_matrix(true_labels_list, pred_labels_list)
+    if dataset == "chexpert":
+            conf_matrix = multilabel_confusion_matrix(true_labels_list, pred_labels_list)
+    else:
+        conf_matrix = confusion_matrix(true_labels_list, pred_labels_list)
 
     for i, model in enumerate(models):
         if was_training[i]:

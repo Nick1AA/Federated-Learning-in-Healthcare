@@ -25,7 +25,7 @@ logger.setLevel(logging.INFO)
 
 args_logdir = "logs/cifar10"
 #args_dataset = "cifar10"
-args_datadir = "./data/cifar10"
+args_datadir = "./data/CheXpert-v1.0-small/"
 args_init_seed = 0
 args_net_config = [3072, 100, 10]
 #args_partition = "hetero-dir"
@@ -105,8 +105,8 @@ def train_net(net_id, net, train_dataloader, test_dataloader, epochs, lr, args, 
     logger.info('n_training: %d' % len(train_dataloader))
     logger.info('n_test: %d' % len(test_dataloader))
 
-    train_acc = compute_accuracy(net, train_dataloader, device=device)
-    test_acc, conf_matrix = compute_accuracy(net, test_dataloader, get_confusion_matrix=True, device=device)
+    train_acc = compute_accuracy(net, train_dataloader, device=device, dataset=args.dataset)
+    test_acc, conf_matrix = compute_accuracy(net, test_dataloader, get_confusion_matrix=True, device=device, dataset=args.dataset)
 
     logger.info('>> Pre-Training Training accuracy: {}'.format(train_acc))
     logger.info('>> Pre-Training Test accuracy: {}'.format(test_acc))
@@ -114,6 +114,8 @@ def train_net(net_id, net, train_dataloader, test_dataloader, epochs, lr, args, 
     if args.dataset == "cinic10":
         optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0001)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.95)
+    elif args.dataset == "chexpert":
+        optimizer = optim.Adam(net.parameters(), lr = 0.0001) # for chexpert use the adam optimizer with learning rate 0.0001
     else:
         optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9)
     
@@ -125,6 +127,8 @@ def train_net(net_id, net, train_dataloader, test_dataloader, epochs, lr, args, 
     for epoch in range(epochs):
         epoch_loss_collector = []
         for batch_idx, (x, target) in enumerate(train_dataloader):
+            if args.dataset == "chexpert":
+                target = target[5:19]
             x, target = x.to(device), target.to(device)
 
             optimizer.zero_grad()
@@ -148,8 +152,8 @@ def train_net(net_id, net, train_dataloader, test_dataloader, epochs, lr, args, 
         if args.dataset == "cinic10":
             scheduler.step()
 
-    train_acc = compute_accuracy(net, train_dataloader, device=device)
-    test_acc, conf_matrix = compute_accuracy(net, test_dataloader, get_confusion_matrix=True, device=device)
+    train_acc = compute_accuracy(net, train_dataloader, device=device, dataset = args.dataset)
+    test_acc, conf_matrix = compute_accuracy(net, test_dataloader, get_confusion_matrix=True, device=device, dataset = args.dataset)
 
     logger.info('>> Training accuracy: %f' % train_acc)
     logger.info('>> Test accuracy: %f' % test_acc)
@@ -761,22 +765,26 @@ def local_retrain(local_datasets, weights, args, mode="bottom-up", freezing_inde
     train_dl_local = local_datasets[0]
     test_dl_local = local_datasets[1]
 
+    # hier überprüfen, ob dies auch für chexpert gilt
     if mode != "block-wise":
         if freezing_index < (len(weights) - 2):
             optimizer_fine_tune = optim.SGD(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=args.retrain_lr, momentum=0.9)
         else:
             optimizer_fine_tune = optim.SGD(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=(args.retrain_lr/10), momentum=0.9, weight_decay=0.0001)
     else:
-        #optimizer_fine_tune = optim.SGD(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=args.retrain_lr, momentum=0.9)
-        optimizer_fine_tune = optim.Adam(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=0.001, weight_decay=0.0001, amsgrad=True)
-    
+        if args.model == 'densenet121':
+            optimizer_fine_tune = optim.Adam(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=0.0001, weight_decay=0.0001, amsgrad=True)
+        else:
+            #optimizer_fine_tune = optim.SGD(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=args.retrain_lr, momentum=0.9)
+            optimizer_fine_tune = optim.Adam(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=0.001, weight_decay=0.0001, amsgrad=True)
+        
     criterion_fine_tune = nn.CrossEntropyLoss().to(device)
 
     logger.info('n_training: %d' % len(train_dl_local))
     logger.info('n_test: %d' % len(test_dl_local))
 
-    train_acc = compute_accuracy(matched_cnn, train_dl_local, device=device)
-    test_acc, conf_matrix = compute_accuracy(matched_cnn, test_dl_local, get_confusion_matrix=True, device=device)
+    train_acc = compute_accuracy(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
+    test_acc, conf_matrix = compute_accuracy(matched_cnn, test_dl_local, get_confusion_matrix=True, device=device, dataset=args.dataset)
 
     logger.info('>> Pre-Training Training accuracy: %f' % train_acc)
     logger.info('>> Pre-Training Test accuracy: %f' % test_acc)
@@ -792,6 +800,8 @@ def local_retrain(local_datasets, weights, args, mode="bottom-up", freezing_inde
     for epoch in range(retrain_epochs):
         epoch_loss_collector = []
         for batch_idx, (x, target) in enumerate(train_dl_local):
+            if args.dataset == 'chexpert':
+                target = target[5:19]
             x, target = x.to(device), target.to(device)
 
             optimizer_fine_tune.zero_grad()
@@ -810,8 +820,8 @@ def local_retrain(local_datasets, weights, args, mode="bottom-up", freezing_inde
         epoch_loss = sum(epoch_loss_collector) / len(epoch_loss_collector)
         logger.info('Epoch: %d Epoch Avg Loss: %f' % (epoch, epoch_loss))
 
-    train_acc = compute_accuracy(matched_cnn, train_dl_local, device=device)
-    test_acc, conf_matrix = compute_accuracy(matched_cnn, test_dl_local, get_confusion_matrix=True, device=device)
+    train_acc = compute_accuracy(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
+    test_acc, conf_matrix = compute_accuracy(matched_cnn, test_dl_local, get_confusion_matrix=True, device=device, dataset=args.dataset)
 
     logger.info('>> Training accuracy after local retrain: %f' % train_acc)
     logger.info('>> Test accuracy after local retrain: %f' % test_acc)
@@ -886,14 +896,17 @@ def local_retrain_fedavg(local_datasets, weights, args, device="cpu"):
     test_dl_local = local_datasets[1]
 
     #optimizer_fine_tune = optim.Adam(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=0.001, weight_decay=0.0001, amsgrad=True)
-    optimizer_fine_tune = optim.SGD(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=args.retrain_lr, momentum=0.9, weight_decay=0.0001)    
+    if args.model == 'densenet121':
+            optimizer_fine_tune = optim.Adam(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=0.0001, weight_decay=0.0001, amsgrad=True)
+    else:
+        optimizer_fine_tune = optim.SGD(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=args.retrain_lr, momentum=0.9, weight_decay=0.0001)    
     criterion_fine_tune = nn.CrossEntropyLoss().to(device)
 
     logger.info('n_training: %d' % len(train_dl_local))
     logger.info('n_test: %d' % len(test_dl_local))
 
-    train_acc = compute_accuracy(matched_cnn, train_dl_local, device=device)
-    test_acc, conf_matrix = compute_accuracy(matched_cnn, test_dl_local, get_confusion_matrix=True, device=device)
+    train_acc = compute_accuracy(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
+    test_acc, conf_matrix = compute_accuracy(matched_cnn, test_dl_local, get_confusion_matrix=True, device=device, dataset=args.dataset)
 
     logger.info('>> Pre-Training Training accuracy: %f' % train_acc)
     logger.info('>> Pre-Training Test accuracy: %f' % test_acc)
@@ -902,6 +915,8 @@ def local_retrain_fedavg(local_datasets, weights, args, device="cpu"):
     for epoch in range(args.retrain_epochs):
         epoch_loss_collector = []
         for batch_idx, (x, target) in enumerate(train_dl_local):
+            if args.dataset == 'chexpert':
+                target = target[5:19]
             x, target = x.to(device), target.to(device)
 
             optimizer_fine_tune.zero_grad()
@@ -920,8 +935,8 @@ def local_retrain_fedavg(local_datasets, weights, args, device="cpu"):
         epoch_loss = sum(epoch_loss_collector) / len(epoch_loss_collector)
         logger.info('Epoch: %d Epoch Avg Loss: %f' % (epoch, epoch_loss))
 
-    train_acc = compute_accuracy(matched_cnn, train_dl_local, device=device)
-    test_acc, conf_matrix = compute_accuracy(matched_cnn, test_dl_local, get_confusion_matrix=True, device=device)
+    train_acc = compute_accuracy(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
+    test_acc, conf_matrix = compute_accuracy(matched_cnn, test_dl_local, get_confusion_matrix=True, device=device, dataset=args.dataset)
 
     logger.info('>> Training accuracy after local retrain: %f' % train_acc)
     logger.info('>> Test accuracy after local retrain: %f' % test_acc)
@@ -1509,8 +1524,8 @@ if __name__ == "__main__":
 
     # ensemble part of experiments
     logger.info("Computing Uniform ensemble accuracy")
-    uens_train_acc, _ = compute_ensemble_accuracy(nets_list, train_dl_global, n_classes,  uniform_weights=True, device=device)
-    uens_test_acc, _ = compute_ensemble_accuracy(nets_list, test_dl_global, n_classes, uniform_weights=True, device=device)
+    uens_train_acc, _ = compute_ensemble_accuracy(nets_list, train_dl_global, n_classes,  uniform_weights=True, device=device, dataset = args.dataset)
+    uens_test_acc, _ = compute_ensemble_accuracy(nets_list, test_dl_global, n_classes, uniform_weights=True, device=device, dataset = args.dataset)
 
     logger.info("Uniform ensemble (Train acc): {}".format(uens_train_acc))
     logger.info("Uniform ensemble (Test acc): {}".format(uens_test_acc))

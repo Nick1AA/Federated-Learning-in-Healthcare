@@ -1,7 +1,7 @@
 python main.py --model=densenet121 \
 --dataset=chexpert \
 --lr=0.0001 \
---retrain_lr=0.01 \
+--retrain_lr=0.0001 \
 --batch-size=16 \
 --epochs=3 \
 --retrain_epochs=3 \

@@ -6,8 +6,12 @@ This file needs to be changed so that the desired dataset is integrated
 import torch.utils.data as data
 from PIL import Image
 import numpy as np
+import torch
 from torchvision.datasets import MNIST, CIFAR10
 from torchvision.datasets import DatasetFolder
+import torchvision.transforms as transforms
+
+from sklearn.model_selection import train_test_split
 
 from PIL import Image
 
@@ -15,6 +19,8 @@ import os
 import os.path
 import sys
 import logging
+import pandas as pd
+import cv2
 
 logging.basicConfig()
 logger = logging.getLogger()
@@ -45,6 +51,72 @@ def default_loader(path):
         return accimage_loader(path)
     else:
         return pil_loader(path)
+
+class CheXpert_dataset(data.Dataset):
+
+    def __init__(self, root, train=True, valid=False, transform=True, dataidxs=None):
+
+        self.root = root
+        self.train = train
+        self.valid = valid
+        self.dataidxs = dataidxs
+
+        if  not valid:
+            file_name = root + "train.csv"
+        
+        else:
+            file_name = root + "valid.csv"
+        
+
+        self.dataframe = pd.read_csv(io=file_name)
+
+        if not valid:
+            train_ds, test_ds = train_test_split(self.dataframe, test_size=0.3, shuffle = False)
+            if train:
+                self.dataframe = train_ds
+            else:
+                self.dataframe = test_ds
+        if (transform):
+            self.transform = transforms.Compose([transforms.Resize((320, 320)), transforms.ToTensor()])
+        
+        # self.data, self.target = self.__build_truncated_dataset__()
+        # Liste der Daten mit Attribute Person, ID und co
+
+    def __len__(self):
+        'Denotes the total number of samples'
+        return len(self.dataframe.shape[0])
+
+    def __getitem__(self, index):
+
+        image = self.dataframe.iloc[index]["Path"]
+        image = cv2.imread(image)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        image = Image.fromarray(image)    
+        image = self.transform(image)
+        patient = self.dataframe.iloc[index]["Path"]
+        patient = patient[26:38]
+        labels = [patient]
+        labels.append([self.dataframe.iloc[index][x] for x in range(1, 19)])
+        # if not self.train or self.valid:
+        #     labels = [self.dataframe.iloc[index][x] for x in range(5, 19)]
+        return {"image": image , "targets": torch.tensor(labels, dtype=torch.long)}
+
+    # def __build_truncated_dataset__(self):
+
+    #     data = []
+    #     target = []
+
+    #     for x in range(0,self.dataframe.shape[0] -1):
+    #         image, label = __getitem__(x)
+    #         data.append(image)
+    #         target.append(label)
+
+    #     if self.dataidxs is not None:
+    #         data = [data[idx] for idx in self.dataidxs]
+    #         target = [target[idx] for idx in self.dataidxs]
+            
+
+    #     return data, target
 
 class MNIST_truncated(data.Dataset):
 

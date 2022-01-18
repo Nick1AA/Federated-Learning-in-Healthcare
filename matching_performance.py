@@ -51,6 +51,8 @@ def compute_model_averaging_accuracy(models, weights, train_dl, test_dl, n_class
     
     correct, total = 0, 0
     for batch_idx, (x, target) in enumerate(test_dl):
+        if args.dataset == 'chexpert':
+                target = target[5:19]
         out_k = avg_cnn(x)
         _, pred_label = torch.max(out_k, 1)
         total += x.data.size()[0]
@@ -160,6 +162,8 @@ def compute_full_cnn_accuracy(models, weights, train_dl, test_dl, n_classes, dev
     
     correct, total = 0, 0
     for batch_idx, (x, target) in enumerate(test_dl):
+        if args.dataset == 'chexpert':
+                target = target[5:19]
         x, target = x.to(device), target.to(device)
         out_k = matched_cnn(x)
         _, pred_label = torch.max(out_k, 1)
