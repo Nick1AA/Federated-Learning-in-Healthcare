@@ -51,10 +51,26 @@ def compute_model_averaging_accuracy(models, weights, train_dl, test_dl, n_class
     
     correct, total = 0, 0
     for batch_idx, (x, target) in enumerate(test_dl):
-        if args.dataset == 'chexpert':
-                target = target[5:19]
+        handle_uncertainty_labels(target)
+        if args.dataset == "chexpert":
+            target_new = []
+            for x in range(len(target)):
+                target_new.append(target[x][1:15])
+            target = target_new  
         out_k = avg_cnn(x)
         _, pred_label = torch.max(out_k, 1)
+        if args.dataset == "chexpert":
+                pred_label = []
+                for i in  out_k:
+                    if i >= 0.5:
+                        pred_label.append(1)
+                    elif i <= -0.5:
+                        pred_label.append(-1)
+                    elif (i < 0.5 and i > -0.5):
+                        pred_label.append(0)
+                    else:
+                        pred_label.append(None)
+
         total += x.data.size()[0]
         correct += (pred_label == target.data).sum().item()
         
@@ -162,11 +178,26 @@ def compute_full_cnn_accuracy(models, weights, train_dl, test_dl, n_classes, dev
     
     correct, total = 0, 0
     for batch_idx, (x, target) in enumerate(test_dl):
-        if args.dataset == 'chexpert':
-                target = target[5:19]
+        handle_uncertainty_labels(target)
+        if args.dataset == "chexpert":
+            target_new = []
+            for x in range(len(target)):
+                target_new.append(target[x][1:15])
+            target = target_new  
         x, target = x.to(device), target.to(device)
         out_k = matched_cnn(x)
         _, pred_label = torch.max(out_k, 1)
+        if args.dataset == "chexpert":
+                pred_label = []
+                for i in  out_k:
+                    if i >= 0.5:
+                        pred_label.append(1)
+                    elif i <= -0.5:
+                        pred_label.append(-1)
+                    elif (i < 0.5 and i > -0.5):
+                        pred_label.append(0)
+                    else:
+                        pred_label.append(None)
         total += x.data.size()[0]
         correct += (pred_label == target.data).sum().item()
         

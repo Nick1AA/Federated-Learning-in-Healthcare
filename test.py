@@ -1,15 +1,12 @@
 from model import *
+import cv2
+from PIL import Image
+from pathlib import Path
 
 if __name__ == "__main__":
-    model_meta_data = []
-    layer_type = []
-    
-    cnn = ModerateCNN()
-
-    for (k, v) in cnn.state_dict().items():
-        model_meta_data.append(v.shape)
-        layer_type.append(k)
-
-    #print(cnn)
-    print(model_meta_data)
-    print(layer_type)
+    image = "/pfs/data5/home/kit/aifb/sq8430/Federated-Learning-in-Healthcare/data/CheXpert-v1.0-small/train/patient00001/study1/view1_frontal.jpg"
+    print(image)
+    path = Path(image)
+    if path.is_file():
+        image = Image.open(image)
+        print(image.mode)

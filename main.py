@@ -127,8 +127,12 @@ def train_net(net_id, net, train_dataloader, test_dataloader, epochs, lr, args, 
     for epoch in range(epochs):
         epoch_loss_collector = []
         for batch_idx, (x, target) in enumerate(train_dataloader):
+            handle_uncertainty_labels(target)
             if args.dataset == "chexpert":
-                target = target[5:19]
+                target_new = []
+                for x in range(len(target)):
+                    target_new.append(target[x][1:15])
+                target = target_new  
             x, target = x.to(device), target.to(device)
 
             optimizer.zero_grad()
@@ -800,8 +804,12 @@ def local_retrain(local_datasets, weights, args, mode="bottom-up", freezing_inde
     for epoch in range(retrain_epochs):
         epoch_loss_collector = []
         for batch_idx, (x, target) in enumerate(train_dl_local):
-            if args.dataset == 'chexpert':
-                target = target[5:19]
+            handle_uncertainty_labels(target)
+            if args.dataset == "chexpert":
+                target_new = []
+                for x in range(len(target)):
+                    target_new.append(target[x][1:15])
+                target = target_new  
             x, target = x.to(device), target.to(device)
 
             optimizer_fine_tune.zero_grad()
@@ -915,8 +923,12 @@ def local_retrain_fedavg(local_datasets, weights, args, device="cpu"):
     for epoch in range(args.retrain_epochs):
         epoch_loss_collector = []
         for batch_idx, (x, target) in enumerate(train_dl_local):
-            if args.dataset == 'chexpert':
-                target = target[5:19]
+            handle_uncertainty_labels(target)
+            if args.dataset == "chexpert":
+                target_new = []
+                for x in range(len(target)):
+                    target_new.append(target[x][1:15])
+                target = target_new  
             x, target = x.to(device), target.to(device)
 
             optimizer_fine_tune.zero_grad()
@@ -1496,7 +1508,10 @@ if __name__ == "__main__":
         y_train, net_dataidx_map, traindata_cls_counts, baseline_indices = partition_data(args.dataset, args_datadir, args_logdir, 
                                                     args.partition, args.n_nets, args_alpha, args=args)
 
-    n_classes = len(np.unique(y_train))
+    if args.dataset == 'chexpert':
+        n_classes = 14
+    else:
+        n_classes = len(np.unique(y_train))
     averaging_weights = np.zeros((args.n_nets, n_classes), dtype=np.float32)
 
     for i in range(n_classes):

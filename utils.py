@@ -102,8 +102,6 @@ def partition_data(dataset, datadir, logdir, partition, n_nets, alpha, args):
         n_train = y_train.shape[0]
     elif dataset == 'chexpert':
         X_train, y_train, X_test, y_test = load_chexpert_data(datadir) # evtl hier schon validation set einführen
-        y_train = handle_uncertainty_labels(y_train)
-        y_test = handle_uncertainty_labels(y_test)
         n_train = X_train.shape[0]
 
     # Note for the CheXpert dataset only partition "homo" is applicable
@@ -234,14 +232,15 @@ def load_cifar10_data(datadir):
 
 def load_chexpert_data(datadir): 
 
-    chexpert_train_ds = CheXpert_dataset(datadir, train=True, transform=True)
-    chexpert_test_ds = CheXpert_dataset(datadir, train=False, transform=True)
+    chexpert_train_ds = CheXpert_dataset(datadir, train=True, transform=True, no_labels = True)
+    chexpert_test_ds = CheXpert_dataset(datadir, train=False, transform=True, no_labels = True)
 
     training_set = data.DataLoader(chexpert_train_ds, batch_size = chexpert_train_ds.__len__(), shuffle=True)
     test_set = data.DataLoader(chexpert_test_ds, batch_size = chexpert_test_ds.__len__(), shuffle=True)
 
-    X_train, y_train = next(iter(training_set))
-    X_test, y_test = next(iter(test_set))
+    X_train = next(iter(training_set))
+    X_test = next(iter(test_set))
+    y_train, y_test = None
 
     return (X_train, y_train, X_test, y_test)
 
@@ -251,7 +250,13 @@ def handle_uncertainty_labels(labels):
         if (x[13] == 0):
             x[13] = 1
     return labels
-        
+
+def handle_single_uncertainty_label(label):
+    # apply the U-Ones approach for the class Atelectasis, U-Multiclass approach (for Cardiomegaly) is the default approach
+    
+    if (label[13] == 0):
+        label[13] = 1
+    return label       
 
 def compute_accuracy(model, dataloader, get_confusion_matrix=False, device="cpu", dataset=None):
 
@@ -265,11 +270,26 @@ def compute_accuracy(model, dataloader, get_confusion_matrix=False, device="cpu"
     correct, total = 0, 0
     with torch.no_grad():
         for batch_idx, (x, target) in enumerate(dataloader):
+            handle_uncertainty_labels(target)
             if dataset == "chexpert":
-                target = target[5:19]
+                target_new = []
+                for x in range(len(target)):
+                    target_new.append(target[x][1:15])
+                target = target_new    
             x, target = x.to(device), target.to(device)
             out = model(x)
             _, pred_label = torch.max(out.data, 1)
+            if dataset == "chexpert":
+                pred_label = []
+                for i in  out:
+                    if i >= 0.5:
+                        pred_label.append(1)
+                    elif i <= -0.5:
+                        pred_label.append(-1)
+                    elif (i < 0.5 and i > -0.5):
+                        pred_label.append(0)
+                    else:
+                        pred_label.append(None)
 
             total += x.data.size()[0]
             correct += (pred_label == target.data).sum().item() # hier evtl aufpassen
@@ -530,13 +550,28 @@ def compute_ensemble_accuracy(models: list, dataloader, n_classes, train_cls_cou
 
     with torch.no_grad():
         for batch_idx, (x, target) in enumerate(dataloader):
-            if dataset == 'chexpert':
-                target = target[5:19]
+            handle_uncertainty_labels(target)
+            if dataset == "chexpert":
+                target_new = []
+                for x in range(len(target)):
+                    target_new.append(target[x][1:15])
+                target = target_new  
             x, target = x.to(device), target.to(device)
             target = target.long()
             out = get_weighted_average_pred(models, weights_norm, x, device=device)
 
             _, pred_label = torch.max(out, 1)
+            if dataset == "chexpert":
+                pred_label = []
+                for i in  out:
+                    if i >= 0.5:
+                        pred_label.append(1)
+                    elif i <= -0.5:
+                        pred_label.append(-1)
+                    elif (i < 0.5 and i > -0.5):
+                        pred_label.append(0)
+                    else:
+                        pred_label.append(None)
 
             total += x.data.size()[0]
             correct += (pred_label == target.data).sum().item()
