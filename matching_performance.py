@@ -6,7 +6,7 @@ from utils import *
 from vgg import *
 from vgg import matched_vgg11
 
-def compute_model_averaging_accuracy(models, weights, train_dl, test_dl, n_classes, args):
+def compute_model_averaging_accuracy(models, weights, train_dl, test_dl, n_classes, args, device = "cpu"):
     """An variant of fedaveraging"""
     if args.model == "lenet":
         avg_cnn = LeNet()
@@ -49,32 +49,32 @@ def compute_model_averaging_accuracy(models, weights, train_dl, test_dl, n_class
     avg_cnn.eval()
     ##    
     
-    correct, total = 0, 0
-    for batch_idx, (x, target) in enumerate(test_dl):
-        handle_uncertainty_labels(target)
-        if args.dataset == "chexpert":
-            target_new = []
-            for x in range(len(target)):
-                target_new.append(target[x][1:15])
-            target = target_new  
-        out_k = avg_cnn(x)
-        _, pred_label = torch.max(out_k, 1)
-        if args.dataset == "chexpert":
-                pred_label = []
-                for i in  out_k:
-                    if i >= 0.5:
-                        pred_label.append(1)
-                    elif i <= -0.5:
-                        pred_label.append(-1)
-                    elif (i < 0.5 and i > -0.5):
-                        pred_label.append(0)
-                    else:
-                        pred_label.append(None)
+    if not (args.dataset == "chexpert"):
+        correct, total = 0, 0
+        for batch_idx, (x, target) in enumerate(test_dl):
+            target = handle_uncertainty_labels(target)
+            
+            out_k = avg_cnn(x)
+            _, pred_label = torch.max(out_k, 1)
+            if args.dataset == "chexpert":
+                    pred_label = []
+                    for i in  out_k:
+                        if i >= 0.5:
+                            pred_label.append(1)
+                        elif i <= -0.5:
+                            pred_label.append(-1)
+                        elif (i < 0.5 and i > -0.5):
+                            pred_label.append(0)
+                        else:
+                            pred_label.append(None)
 
-        total += x.data.size()[0]
-        correct += (pred_label == target.data).sum().item()
-        
-    logger.info("Accuracy for Fed Averaging correct: {}, total: {}".format(correct, total))
+            total += x.data.size()[0]
+            correct += (pred_label == target.data).sum().item()
+            
+        logger.info("Accuracy for Fed Averaging correct: {}, total: {}".format(correct, total))
+    else:
+        auroc = compute_accuracy(avg_cnn, test_dl, device, dataset = args.dataset)
+        logger.info("auroc score for averaging: {}".format(auroc))
 
 def compute_full_cnn_accuracy(models, weights, train_dl, test_dl, n_classes, device, args):
     """Note that we only handle the FC weights for now"""
@@ -175,30 +175,29 @@ def compute_full_cnn_accuracy(models, weights, train_dl, test_dl, n_classes, dev
     matched_cnn.eval()
 
     ##    
-    
-    correct, total = 0, 0
-    for batch_idx, (x, target) in enumerate(test_dl):
-        handle_uncertainty_labels(target)
-        if args.dataset == "chexpert":
-            target_new = []
-            for x in range(len(target)):
-                target_new.append(target[x][1:15])
-            target = target_new  
-        x, target = x.to(device), target.to(device)
-        out_k = matched_cnn(x)
-        _, pred_label = torch.max(out_k, 1)
-        if args.dataset == "chexpert":
-                pred_label = []
-                for i in  out_k:
-                    if i >= 0.5:
-                        pred_label.append(1)
-                    elif i <= -0.5:
-                        pred_label.append(-1)
-                    elif (i < 0.5 and i > -0.5):
-                        pred_label.append(0)
-                    else:
-                        pred_label.append(None)
-        total += x.data.size()[0]
-        correct += (pred_label == target.data).sum().item()
-        
-    logger.info("Accuracy for Neural Matching correct: {}, total: {}".format(correct, total))
+    if not (args.dataset == "chexpert"):
+        correct, total = 0, 0
+        for batch_idx, (x, target) in enumerate(test_dl):
+            target = handle_uncertainty_labels(target)
+            
+            x, target = x.to(device), target.to(device)
+            out_k = matched_cnn(x)
+            _, pred_label = torch.max(out_k, 1)
+            if args.dataset == "chexpert":
+                    pred_label = []
+                    for i in  out_k:
+                        if i >= 0.5:
+                            pred_label.append(1)
+                        elif i <= -0.5:
+                            pred_label.append(-1)
+                        elif (i < 0.5 and i > -0.5):
+                            pred_label.append(0)
+                        else:
+                            pred_label.append(None)
+            total += x.data.size()[0]
+            correct += (pred_label == target.data).sum().item()
+            
+        logger.info("Accuracy for Neural Matching correct: {}, total: {}".format(correct, total))
+    else:
+        auroc = compute_accuracy(matched_cnn, test_dl, device, dataset = args.dataset)
+        logger.info("auroc score for Neural Matching: {}".format(auroc))

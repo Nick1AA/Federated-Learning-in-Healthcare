@@ -5,9 +5,10 @@ import logging
 import torch.nn as nn
 import torch.nn.functional as F
 
-logging.basicConfig()
+logging.basicConfig(filename='./logs/simulation.log', filemode='a', format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+                            datefmt='%H:%M:%S', level=logging.INFO)
 logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+
 
 
 class SimpleCNNContainerConvBlocks(nn.Module):

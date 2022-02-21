@@ -10,8 +10,8 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as cp
 from torch import Tensor
 
-from utils import load_state_dict_from_url
-from utils import _log_api_usage_once
+from model2 import load_state_dict_from_url
+from model2 import _log_api_usage_once
 
 
 __all__ = ["DenseNet", "densenet121", "densenet169", "densenet201", "densenet161"]

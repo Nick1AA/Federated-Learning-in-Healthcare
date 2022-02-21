@@ -58,7 +58,7 @@ def default_loader(path):
 
 class CheXpert_dataset(data.Dataset):
 
-    def __init__(self, root, train=True, valid=False, transform=True, dataidxs=None, no_labels = False):
+    def __init__(self, root, train=True, valid=False, transform=True, dataidxs=None, no_labels = False, local = False):
 
         self.root = root
         self.train = train
@@ -71,16 +71,43 @@ class CheXpert_dataset(data.Dataset):
         
         else:
             file_name = root + "valid.csv"
-        
+        if no_labels:
+            columns_of_interest = ["Path"]
+        else:
+            columns_of_interest = [
+                "Path",
+                "No Finding",
+                "Enlarged Cardiomediastinum",
+                "Cardiomegaly",
+                "Lung Opacity",
+                "Lung Lesion",
+                "Edema",
+                "Consolidation",
+                "Pneumonia",
+                "Atelectasis",
+                "Pneumothorax",
+                "Pleural Effusion",
+                "Pleural Other",
+                "Fracture",
+                "Support Devices"]
+        self.dataframe = pd.read_csv(file_name, usecols = columns_of_interest)
 
-        self.dataframe = pd.read_csv(file_name)
-
-        if not valid:
+        if not valid:# and dataidxs == None:
             train_ds, test_ds = train_test_split(self.dataframe, test_size=0.3, shuffle = False)
             if train:
                 self.dataframe = train_ds
             else:
                 self.dataframe = test_ds
+        if dataidxs != None:
+            self.dataframe = self.dataframe.iloc[dataidxs]
+        if local:
+            # to make local testing faster we select  1/16 th of all test data points
+            # this leads to a ratio of 0,7 for the local training data compared to the sum of local test and training data
+            elements = np.arange(self.dataframe.shape[0])
+            elements = np.random.permutation(elements)
+            elements = np.array_split(elements, 16)
+            indices = elements[0]
+            self.dataframe = self.dataframe.iloc[indices]
         if (transform):
             self.transform = transforms.Compose([transforms.Resize((320, 320)), transforms.ToTensor()])
         
@@ -88,29 +115,34 @@ class CheXpert_dataset(data.Dataset):
         # Liste der Daten mit Attribute Person, ID und co
 
     def __len__(self):
-        'Denotes the total number of samples'
+        # Denotes the total number of samples
         return self.dataframe.shape[0]
 
     def __getitem__(self, index):
 
-        image = dir_path + "/data/" + self.dataframe.iloc[index]["Path"]
-        path = Path(image)
-        if path.is_file():
-            image = Image.open(image)
-        image = image.convert(mode='RGB')    
-        image = self.transform(image)
         if self.no_labels:
-            labels = None
-            return {"image": image}  
-        else:
+            image = None
             patient = self.dataframe.iloc[index]["Path"]
-            patient = patient[26:38]
-            labels = [patient]
-            labels.append([self.dataframe.iloc[index][x] for x in range(5, 19)])
+            patient = patient[33:38]
+            labels = []
+            labels.append(int(patient))  
+        else:
+            image = dir_path + "/data/" + self.dataframe.iloc[index]["Path"]
+            # image = "/scratch/" + self.dataframe.iloc[index]["Path"]
+            path = Path(image)
+            if path.is_file():
+                image = Image.open(image)
+            image = image.convert(mode='RGB')    
+            image = self.transform(image)
+            labels = []
+            for x in range(1, 15): 
+                labels.append(self.dataframe.iloc[index][x])
+                
         # if not self.train or self.valid:
         #     labels = [self.dataframe.iloc[index][x] for x in range(5, 19)]
-        return {"image": image , "targets": torch.tensor(labels, dtype=torch.long)}
+        return image, torch.tensor(labels)
 
+    
     # def __build_truncated_dataset__(self):
 
     #     data = []

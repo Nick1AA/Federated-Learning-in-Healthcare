@@ -9,10 +9,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as cp
 from torch import Tensor
+from sklearn.preprocessing import MinMaxScaler
 
-from utils import load_state_dict_from_url
-from utils import _log_api_usage_once
 
+from types import FunctionType
+from typing import Any
+
+try:
+    from torch.hub import load_state_dict_from_url  # noqa: 401
+except ImportError:
+    from torch.utils.model_zoo import load_url as load_state_dict_from_url  # noqa: 401
 
 __all__ = ["DenseNet", "densenet121", "densenet169", "densenet201", "densenet161"]
 
@@ -23,6 +29,29 @@ model_urls = {
     "densenet161": "https://download.pytorch.org/models/densenet161-8d451a50.pth",
 }
 
+def _log_api_usage_once(obj: Any) -> None:
+
+    """
+    Logs API usage(module and name) within an organization.
+    In a large ecosystem, it's often useful to track the PyTorch and
+    TorchVision APIs usage. This API provides the similar functionality to the
+    logging module in the Python stdlib. It can be used for debugging purpose
+    to log which methods are used and by default it is inactive, unless the user
+    manually subscribes a logger via the `SetAPIUsageLogger method <https://github.com/pytorch/pytorch/blob/eb3b9fe719b21fae13c7a7cf3253f970290a573e/c10/util/Logging.cpp#L114>`_.
+    Please note it is triggered only once for the same API call within a process.
+    It does not collect any data from open-source users since it is no-op by default.
+    For more information, please refer to
+    * PyTorch note: https://pytorch.org/docs/stable/notes/large_scale_deployments.html#api-usage-logging;
+    * Logging policy: https://github.com/pytorch/vision/issues/5052;
+    Args:
+        obj (class instance or method): an object to extract info from.
+    """
+    if not obj.__module__.startswith("torchvision"):
+        return
+    name = obj.__class__.__name__
+    if isinstance(obj, FunctionType):
+        name = obj.__name__
+    torch._C._log_api_usage_once(f"{obj.__module__}.{name}")
 
 class _DenseLayer(nn.Module):
     def __init__(
@@ -218,6 +247,8 @@ class DenseNet(nn.Module):
         out = F.adaptive_avg_pool2d(out, (1, 1))
         out = torch.flatten(out, 1)
         out = self.classifier(out)
+        scaler = MinMaxScaler()
+        out = scaler.fit_transform()
         return out
 
 
@@ -256,7 +287,7 @@ def _densenet(
 
 
 def densenet121(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> DenseNet:
-    r"""Densenet-121 model from
+    """Densenet-121 model from
     `"Densely Connected Convolutional Networks" <https://arxiv.org/pdf/1608.06993.pdf>`_.
     The required minimum input size of the model is 29x29.
     Args:
@@ -269,7 +300,7 @@ def densenet121(pretrained: bool = False, progress: bool = True, **kwargs: Any) 
 
 
 def densenet161(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> DenseNet:
-    r"""Densenet-161 model from
+    """Densenet-161 model from
     `"Densely Connected Convolutional Networks" <https://arxiv.org/pdf/1608.06993.pdf>`_.
     The required minimum input size of the model is 29x29.
     Args:
@@ -282,7 +313,7 @@ def densenet161(pretrained: bool = False, progress: bool = True, **kwargs: Any) 
 
 
 def densenet169(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> DenseNet:
-    r"""Densenet-169 model from
+    """Densenet-169 model from
     `"Densely Connected Convolutional Networks" <https://arxiv.org/pdf/1608.06993.pdf>`_.
     The required minimum input size of the model is 29x29.
     Args:
@@ -295,7 +326,7 @@ def densenet169(pretrained: bool = False, progress: bool = True, **kwargs: Any) 
 
 
 def densenet201(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> DenseNet:
-    r"""Densenet-201 model from
+    """Densenet-201 model from
     `"Densely Connected Convolutional Networks" <https://arxiv.org/pdf/1608.06993.pdf>`_.
     The required minimum input size of the model is 29x29.
     Args:
@@ -499,27 +530,9 @@ class DenseNetContainer(nn.Module):
         out = F.adaptive_avg_pool2d(out, (1, 1))
         out = torch.flatten(out, 1)
         out = self.classifier(out)
+        scaler = MinMaxScaler()
+        out = scaler.fit_transform()
         return out
-
-
-def _load_state_dict(model: nn.Module, model_url: str, progress: bool) -> None:
-    # '.'s are no longer allowed in module names, but previous _DenseLayer
-    # has keys 'norm.1', 'relu.1', 'conv.1', 'norm.2', 'relu.2', 'conv.2'.
-    # They are also in the checkpoints in model_urls. This pattern is used
-    # to find such keys.
-    pattern = re.compile(
-        r"^(.*denselayer\d+\.(?:norm|relu|conv))\.((?:[12])\.(?:weight|bias|running_mean|running_var))$"
-    )
-
-    state_dict = load_state_dict_from_url(model_url, progress=progress)
-    for key in list(state_dict.keys()):
-        res = pattern.match(key)
-        if res:
-            new_key = res.group(1) + res.group(2)
-            state_dict[new_key] = state_dict[key]
-            del state_dict[key]
-    model.load_state_dict(state_dict)
-
 
 def _densenetContainer(
     arch: str,

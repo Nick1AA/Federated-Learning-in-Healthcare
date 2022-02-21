@@ -5,26 +5,30 @@ Soll bei Aufruf von main die Möglichkeit bestehen beide Algorithmen mit und ohn
 Soll die Möglichkeit zwischen mehreren Partitionsarten zu wählen beibehalten werden?
 """
 
-from model2 import densenet121Container
+from model2 import densenet121Container, densenet121
 from utils import *
 from vgg import matched_vgg11
 from matching.utils2 import densenet121Flex
+from analysis import analyze
 import pickle
 import copy
 import argparse
 from torch import optim
+from distutils.dir_util import copy_tree
+import logging
 
 from matching.pfnm import layer_wise_group_descent
 from matching.pfnm import block_patching, patch_weights
 
 from matching_performance import compute_model_averaging_accuracy, compute_full_cnn_accuracy
 
-logging.basicConfig()
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+logging.basicConfig(format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+                            datefmt='%H:%M:%S', level=logging.DEBUG)
+logger = logging.getLogger("main")
 
-args_logdir = "logs/cifar10"
+args_logdir = "./logs/"
 #args_dataset = "cifar10"
+# args_datadir = "/scratch/CheXpert-v1.0-small/"
 args_datadir = "./data/CheXpert-v1.0-small/"
 args_init_seed = 0
 args_net_config = [3072, 100, 10]
@@ -102,14 +106,21 @@ def trans_next_conv_layer_backward(layer_weight, next_layer_shape):
 
 def train_net(net_id, net, train_dataloader, test_dataloader, epochs, lr, args, device="cpu"):
     logger.info('Training network %s' % str(net_id))
-    logger.info('n_training: %d' % len(train_dataloader))
-    logger.info('n_test: %d' % len(test_dataloader))
+    logger.info('n_training: %d' % len(train_dataloader.dataset))
+    logger.info('n_test: %d' % len(test_dataloader.dataset))
 
-    train_acc = compute_accuracy(net, train_dataloader, device=device, dataset=args.dataset)
-    test_acc, conf_matrix = compute_accuracy(net, test_dataloader, get_confusion_matrix=True, device=device, dataset=args.dataset)
+    if not (args.dataset == "chexpert"):
+        train_acc = compute_accuracy(net, train_dataloader, device=device, dataset=args.dataset)
+        test_acc, conf_matrix = compute_accuracy(net, test_dataloader, get_confusion_matrix=True, device=device, dataset=args.dataset)
 
-    logger.info('>> Pre-Training Training accuracy: {}'.format(train_acc))
-    logger.info('>> Pre-Training Test accuracy: {}'.format(test_acc))
+        logger.info('>> Pre-Training Training accuracy: {}'.format(train_acc))
+        logger.info('>> Pre-Training Test accuracy: {}'.format(test_acc))
+    else:
+        train_auroc = compute_auroc(net, train_dataloader, device=device, dataset=args.dataset)
+        test_auroc = compute_auroc(net, test_dataloader, device=device, dataset=args.dataset)
+
+        logger.info('>> Pre-Training Training auroc: {}'.format(train_auroc))
+        logger.info('>> Pre-Training Test auroc: {}'.format(test_auroc))
 
     if args.dataset == "cinic10":
         optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0001)
@@ -123,22 +134,18 @@ def train_net(net_id, net, train_dataloader, test_dataloader, epochs, lr, args, 
 
     cnt = 0
     losses, running_losses = [], []
-
+    logger.info("Start training")
     for epoch in range(epochs):
         epoch_loss_collector = []
         for batch_idx, (x, target) in enumerate(train_dataloader):
-            handle_uncertainty_labels(target)
-            if args.dataset == "chexpert":
-                target_new = []
-                for x in range(len(target)):
-                    target_new.append(target[x][1:15])
-                target = target_new  
+            target = handle_uncertainty_labels(target)
+            target = handle_NaN_values(target)
             x, target = x.to(device), target.to(device)
 
             optimizer.zero_grad()
             x.requires_grad = True
             target.requires_grad = False
-            target = target.long()
+            # target = target.long()
 
             out = net(x)
             loss = criterion(out, target)
@@ -156,13 +163,24 @@ def train_net(net_id, net, train_dataloader, test_dataloader, epochs, lr, args, 
         if args.dataset == "cinic10":
             scheduler.step()
 
-    train_acc = compute_accuracy(net, train_dataloader, device=device, dataset = args.dataset)
-    test_acc, conf_matrix = compute_accuracy(net, test_dataloader, get_confusion_matrix=True, device=device, dataset = args.dataset)
+    if not (args.dataset == "chexpert"):
+        train_acc = compute_accuracy(net, train_dataloader, device=device, dataset=args.dataset)
+        test_acc, conf_matrix = compute_accuracy(net, test_dataloader, get_confusion_matrix=True, device=device, dataset=args.dataset)
 
-    logger.info('>> Training accuracy: %f' % train_acc)
-    logger.info('>> Test accuracy: %f' % test_acc)
+        logger.info('>> Training accuracy: {}'.format(train_acc))
+        logger.info('>> Test accuracy: {}'.format(test_acc))
+    else:
+        train_auroc = compute_auroc(net, train_dataloader, device=device, dataset=args.dataset)
+        test_auroc = compute_auroc(net, test_dataloader, device=device, dataset=args.dataset)
+
+        logger.info('>> Training auroc: {}'.format(train_auroc))
+        logger.info('>> Test auroc: {}'.format(test_auroc))
+
     logger.info(' ** Training complete **')
-    return train_acc, test_acc
+    if not (args.dataset == "chexpert"):
+        return train_acc, test_acc
+    else:
+        return train_auroc, test_auroc
 
 
 def local_train(nets, args, net_dataidx_map, device="cpu"):
@@ -170,20 +188,24 @@ def local_train(nets, args, net_dataidx_map, device="cpu"):
     local_datasets = []
     for net_id, net in nets.items():
         if args.retrain:
-            dataidxs = net_dataidx_map[net_id]
-            logger.info("Training network %s. n_training: %d" % (str(net_id), len(dataidxs)))
-            # move the model to cuda device:
-            net.to(device)
+            if net_id >=12:
+                dataidxs = net_dataidx_map[net_id]
+                logger.info("Training network %s. n_training: %d" % (str(net_id), len(dataidxs)))
+                # move the model to cuda device:
+                net.to(device)
 
-            train_dl_local, test_dl_local = get_dataloader(args.dataset, args_datadir, args.batch_size, 32, dataidxs)
-            train_dl_global, test_dl_global = get_dataloader(args.dataset, args_datadir, args.batch_size, 32)
+                train_dl_local, test_dl_local = get_dataloader(args.dataset, args_datadir, args.batch_size, 32, dataidxs)
+                train_dl_global, test_dl_global = get_dataloader(args.dataset, args_datadir, args.batch_size, 32)
 
-            local_datasets.append((train_dl_local, test_dl_local))
+                local_datasets.append((train_dl_local, test_dl_local))
 
-            # switch to global test set here
-            trainacc, testacc = train_net(net_id, net, train_dl_local, test_dl_global, args.epochs, args.lr, args, device=device)
-            # saving the trained models here
-            save_model(net, net_id)
+                # originally we switch to global test set here, but to reduce training time we take local test set
+                trainacc, testacc = train_net(net_id, net, train_dl_local, test_dl_local, args.epochs, args.lr, args, device=device)
+                # saving the trained models here
+                save_model(net, net_id)
+            else:
+                folder = "./saved_weights/Durchlauf1/"
+                load_model_from_folder(folder, net, net_id, device=device)
         else:
             load_model(net, net_id, device=device)
 
@@ -236,7 +258,7 @@ def local_retrain_dummy(local_datasets, weights, args, mode="bottom-up", freezin
 
             num_filters = []
             # densenet121 hat insgesamt 241 conv oder norm Schichten und eine classifier Schicht
-            for i in range (0, 242):
+            for i in range (0, 241):
                 num_filters.append(weights[2*i].shape[0])
 
         elif mode == "block-wise":
@@ -518,7 +540,7 @@ def local_retrain(local_datasets, weights, args, mode="bottom-up", freezing_inde
 
             num_filters = []
             # densenet121 hat insgesamt 241 conv oder norm Schichten und eine classifier Schicht
-            for i in range (0, 242):
+            for i in range (0, 241):
                 num_filters.append(weights[2*i].shape[0])
 
         elif mode == "block-wise":
@@ -787,11 +809,18 @@ def local_retrain(local_datasets, weights, args, mode="bottom-up", freezing_inde
     logger.info('n_training: %d' % len(train_dl_local))
     logger.info('n_test: %d' % len(test_dl_local))
 
-    train_acc = compute_accuracy(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
-    test_acc, conf_matrix = compute_accuracy(matched_cnn, test_dl_local, get_confusion_matrix=True, device=device, dataset=args.dataset)
+    if not (args.dataset == "chexpert"):
+        train_acc = compute_accuracy(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
+        test_acc, conf_matrix = compute_accuracy(matched_cnn, test_dl_local, get_confusion_matrix=True, device=device, dataset=args.dataset)
 
-    logger.info('>> Pre-Training Training accuracy: %f' % train_acc)
-    logger.info('>> Pre-Training Test accuracy: %f' % test_acc)
+        logger.info('>> Pre-Training Training accuracy: {}'.format(train_acc))
+        logger.info('>> Pre-Training Test accuracy: {}'.format(test_acc))
+    else:
+        train_auroc = compute_auroc(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
+        test_auroc = compute_auroc(matched_cnn, test_dl_local, device=device, dataset=args.dataset)
+
+        logger.info('>> Pre-Training Training auroc: {}'.format(train_auroc))
+        logger.info('>> Pre-Training Test auroc: {}'.format(test_auroc))
 
     if mode != "block-wise":
         if freezing_index < (len(weights) - 2):
@@ -804,12 +833,8 @@ def local_retrain(local_datasets, weights, args, mode="bottom-up", freezing_inde
     for epoch in range(retrain_epochs):
         epoch_loss_collector = []
         for batch_idx, (x, target) in enumerate(train_dl_local):
-            handle_uncertainty_labels(target)
-            if args.dataset == "chexpert":
-                target_new = []
-                for x in range(len(target)):
-                    target_new.append(target[x][1:15])
-                target = target_new  
+            target = handle_uncertainty_labels(target)
+            target = handle_NaN_values(target) 
             x, target = x.to(device), target.to(device)
 
             optimizer_fine_tune.zero_grad()
@@ -818,7 +843,7 @@ def local_retrain(local_datasets, weights, args, mode="bottom-up", freezing_inde
             target = target.long()
 
             out = matched_cnn(x)
-            loss = criterion_fine_tune(out, target)
+            loss = criterion_fine_tune(out, target) # loss criterion eventually needs to be adapted or sigmoid added
             epoch_loss_collector.append(loss.item())
 
             loss.backward()
@@ -828,11 +853,19 @@ def local_retrain(local_datasets, weights, args, mode="bottom-up", freezing_inde
         epoch_loss = sum(epoch_loss_collector) / len(epoch_loss_collector)
         logger.info('Epoch: %d Epoch Avg Loss: %f' % (epoch, epoch_loss))
 
-    train_acc = compute_accuracy(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
-    test_acc, conf_matrix = compute_accuracy(matched_cnn, test_dl_local, get_confusion_matrix=True, device=device, dataset=args.dataset)
+    if not (args.dataset == "chexpert"):
+        train_acc = compute_accuracy(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
+        test_acc, conf_matrix = compute_accuracy(matched_cnn, test_dl_local, get_confusion_matrix=True, device=device, dataset=args.dataset)
 
-    logger.info('>> Training accuracy after local retrain: %f' % train_acc)
-    logger.info('>> Test accuracy after local retrain: %f' % test_acc)
+        logger.info('>> Training accuracy after local retrain: {}'.format(train_acc))
+        logger.info('>> Test accuracy after local retrain: {}'.format(test_acc))
+    else:
+        train_auroc = compute_auroc(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
+        test_auroc = compute_auroc(matched_cnn, test_dl_local, device=device, dataset=args.dataset)
+
+        logger.info('>> Training auroc after local retrain: {}'.format(train_auroc))
+        logger.info('>> Test auroc after local retrain: {}'.format(test_auroc))
+
     return matched_cnn
 
 
@@ -913,22 +946,25 @@ def local_retrain_fedavg(local_datasets, weights, args, device="cpu"):
     logger.info('n_training: %d' % len(train_dl_local))
     logger.info('n_test: %d' % len(test_dl_local))
 
-    train_acc = compute_accuracy(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
-    test_acc, conf_matrix = compute_accuracy(matched_cnn, test_dl_local, get_confusion_matrix=True, device=device, dataset=args.dataset)
+    if not (args.dataset == "chexpert"):
+        train_acc = compute_accuracy(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
+        test_acc, conf_matrix = compute_accuracy(matched_cnn, test_dl_local, get_confusion_matrix=True, device=device, dataset=args.dataset)
 
-    logger.info('>> Pre-Training Training accuracy: %f' % train_acc)
-    logger.info('>> Pre-Training Test accuracy: %f' % test_acc)
+        logger.info('>> Pre-Training Training accuracy: {}'.format(train_acc))
+        logger.info('>> Pre-Training Test accuracy: {}'.format(test_acc))
+    else:
+        train_auroc = compute_auroc(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
+        test_auroc = compute_auroc(matched_cnn, test_dl_local, device=device, dataset=args.dataset)
+
+        logger.info('>> Pre-Training Training auroc: {}'.format(train_auroc))
+        logger.info('>> Pre-Training Test auroc: {}'.format(test_auroc))
 
 
     for epoch in range(args.retrain_epochs):
         epoch_loss_collector = []
         for batch_idx, (x, target) in enumerate(train_dl_local):
-            handle_uncertainty_labels(target)
-            if args.dataset == "chexpert":
-                target_new = []
-                for x in range(len(target)):
-                    target_new.append(target[x][1:15])
-                target = target_new  
+            target =handle_uncertainty_labels(target)
+            target = handle_NaN_values(target)
             x, target = x.to(device), target.to(device)
 
             optimizer_fine_tune.zero_grad()
@@ -947,11 +983,18 @@ def local_retrain_fedavg(local_datasets, weights, args, device="cpu"):
         epoch_loss = sum(epoch_loss_collector) / len(epoch_loss_collector)
         logger.info('Epoch: %d Epoch Avg Loss: %f' % (epoch, epoch_loss))
 
-    train_acc = compute_accuracy(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
-    test_acc, conf_matrix = compute_accuracy(matched_cnn, test_dl_local, get_confusion_matrix=True, device=device, dataset=args.dataset)
+    if not (args.dataset == "chexpert"):
+        train_acc = compute_accuracy(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
+        test_acc, conf_matrix = compute_accuracy(matched_cnn, test_dl_local, get_confusion_matrix=True, device=device, dataset=args.dataset)
 
-    logger.info('>> Training accuracy after local retrain: %f' % train_acc)
-    logger.info('>> Test accuracy after local retrain: %f' % test_acc)
+        logger.info('>> Training accuracy after local retrain: {}'.format(train_acc))
+        logger.info('>> Test accuracy after local retrain: {}'.format(test_acc))
+    else:
+        train_auroc = compute_auroc(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
+        test_auroc = compute_auroc(matched_cnn, test_dl_local, device=device, dataset=args.dataset)
+
+        logger.info('>> Training auroc after local retrain: {}'.format(train_auroc))
+        logger.info('>> Test auroc after local retrain: {}'.format(test_auroc))
     return matched_cnn
 
 def reconstruct_local_net(weights, args, ori_assignments=None, worker_index=0):
@@ -1432,6 +1475,8 @@ def fedavg_comm(batch_weights, model_meta_data, layer_type, net_dataidx_map,
         batch_weights = [copy.deepcopy(averaged_weights) for _ in range(args.n_nets)]
         del averaged_weights
 
+    return batch_weights[0]
+
 def fedma_comm(batch_weights, model_meta_data, layer_type, net_dataidx_map, 
                             averaging_weights, args, 
                             train_dl_global,
@@ -1484,15 +1529,23 @@ def fedma_comm(batch_weights, model_meta_data, layer_type, net_dataidx_map,
                                    args=args)
         batch_weights = [copy.deepcopy(hungarian_weights) for _ in range(args.n_nets)]
         del hungarian_weights
-        del retrained_nets
-
+    return batch_weights[0] 
 
 if __name__ == "__main__":
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
+    
     # Assuming that we are on a CUDA machine, this should print a CUDA device:
     logger.info(device)
     args = add_fit_args(argparse.ArgumentParser(description='Probabilistic Federated CNN Matching'))
+
+    # logger.info("Data is on $TMP file system")
+    # if not os.path.isdir(args_datadir):
+    #     logger.info("False: Copy data")
+    #     from_directory = "/pfs/data5/home/kit/aifb/sq8430/Federated-Learning-in-Healthcare/data/CheXpert-v1.0-small/"
+    #     to_directory = args_datadir
+    #     copy_tree(from_directory, to_directory)
+    # else:
+    #     logger.info("True")
 
     seed = 0
 
@@ -1514,17 +1567,49 @@ if __name__ == "__main__":
         n_classes = len(np.unique(y_train))
     averaging_weights = np.zeros((args.n_nets, n_classes), dtype=np.float32)
 
-    for i in range(n_classes):
-        total_num_counts = 0
-        worker_class_counts = [0] * args.n_nets
-        for j in range(args.n_nets):
-            if i in traindata_cls_counts[j].keys():
-                total_num_counts += traindata_cls_counts[j][i]
-                worker_class_counts[j] = traindata_cls_counts[j][i]
-            else:
-                total_num_counts += 0
-                worker_class_counts[j] = 0
-        averaging_weights[:, i] = worker_class_counts / total_num_counts
+    if args.dataset == 'chexpert':
+        observation_classes = [
+        "No Finding",
+        "Enlarged Cardiomediastinum",
+        "Cardiomegaly",
+        "Lung Opacity",
+        "Lung Lesion",
+        "Edema",
+        "Consolidation",
+        "Pneumonia",
+        "Atelectasis",
+        "Pneumothorax",
+        "Pleural Effusion",
+        "Pleural Other",
+        "Fracture",
+        "Support Devices"]
+        
+        for i in range(n_classes):
+            class_i = observation_classes[i]
+            total_num_counts = 0
+            worker_class_counts = [0] * args.n_nets
+            for j in range(args.n_nets):
+                
+                if class_i in traindata_cls_counts[j].keys():
+                    total_num_counts += traindata_cls_counts[j][class_i]
+                    worker_class_counts[j] = traindata_cls_counts[j][class_i]
+                else:
+                    total_num_counts += 0
+                    worker_class_counts[j] = 0
+            help_list = [x / total_num_counts for x in worker_class_counts]    
+            averaging_weights[:, i] = help_list
+    else:
+        for i in range(n_classes):
+            total_num_counts = 0
+            worker_class_counts = [0] * args.n_nets
+            for j in range(args.n_nets):
+                if i in traindata_cls_counts[j].keys():
+                    total_num_counts += traindata_cls_counts[j][i]
+                    worker_class_counts[j] = traindata_cls_counts[j][i]
+                else:
+                    total_num_counts += 0
+                    worker_class_counts[j] = 0
+            averaging_weights[:, i] = worker_class_counts / total_num_counts
 
     logger.info("averaging_weights: {}".format(averaging_weights))
 
@@ -1538,12 +1623,20 @@ if __name__ == "__main__":
     train_dl_global, test_dl_global = get_dataloader(args.dataset, args_datadir, args.batch_size, 32)
 
     # ensemble part of experiments
-    logger.info("Computing Uniform ensemble accuracy")
-    uens_train_acc, _ = compute_ensemble_accuracy(nets_list, train_dl_global, n_classes,  uniform_weights=True, device=device, dataset = args.dataset)
-    uens_test_acc, _ = compute_ensemble_accuracy(nets_list, test_dl_global, n_classes, uniform_weights=True, device=device, dataset = args.dataset)
+    if not(args.dataset == "chexpert"):
+        logger.info("Computing Uniform ensemble accuracy")
+        uens_train_acc, _ = compute_ensemble_accuracy(nets_list, train_dl_global, n_classes,  uniform_weights=True, device=device, dataset = args.dataset)
+        uens_test_acc, _ = compute_ensemble_accuracy(nets_list, test_dl_global, n_classes, uniform_weights=True, device=device, dataset = args.dataset)
 
-    logger.info("Uniform ensemble (Train acc): {}".format(uens_train_acc))
-    logger.info("Uniform ensemble (Test acc): {}".format(uens_test_acc))
+        logger.info("Uniform ensemble (Train acc): {}".format(uens_train_acc))
+        logger.info("Uniform ensemble (Test acc): {}".format(uens_test_acc))
+    else:
+        logger.info("Computing Uniform ensemble auroc")
+        uens_train_auroc, _ = compute_ensemble_auroc(nets_list, train_dl_global, n_classes,  uniform_weights=True, device=device, dataset = args.dataset)
+        uens_test_auroc, _ = compute_ensemble_auroc(nets_list, test_dl_global, n_classes, uniform_weights=True, device=device, dataset = args.dataset)
+
+        logger.info("Uniform ensemble (Train auroc): {}".format(uens_train_auroc))
+        logger.info("Uniform ensemble (Test auroc): {}".format(uens_test_auroc))
 
     # for PFNM
     if args.oneshot_matching:
@@ -1558,7 +1651,7 @@ if __name__ == "__main__":
 
     # this is for PFNM
     hungarian_weights, assignments_list = BBP_MAP(nets_list, model_meta_data, layer_type, net_dataidx_map, averaging_weights, args, device=device)
-
+    save_weights(hungarian_weights, "FedMA_no_comm")
     ## averaging models 
     ## we need to switch to real FedAvg implementation 
     ## FedAvg is originally proposed at: here: https://arxiv.org/abs/1602.05629
@@ -1578,6 +1671,7 @@ if __name__ == "__main__":
     for aw in averaged_weights:
         logger.info(aw.shape)
 
+    save_weights(averaged_weights, "FedAvg_no_comm")
 
     models = nets_list
     _ = compute_full_cnn_accuracy(models,
@@ -1593,8 +1687,10 @@ if __name__ == "__main__":
                                 train_dl_global, 
                                 test_dl_global, 
                                 n_classes,
-                                args)
+                                args, device = device)
 
+    # analyze(models_1 = models, global_weights_1 = averaged_weights, 
+    #         models_2 = models, global_weights_2 = hungarian_weights, args= args)
 
     if args.comm_type == "fedavg":
         ########################################################
@@ -1603,18 +1699,19 @@ if __name__ == "__main__":
         # we turn to enable communication here:
         comm_init_batch_weights = [copy.deepcopy(averaged_weights) for _ in range(args.n_nets)]
 
-        fedavg_comm(comm_init_batch_weights, model_meta_data, layer_type, 
+        global_weights = fedavg_comm(comm_init_batch_weights, model_meta_data, layer_type, 
                             net_dataidx_map, 
                             averaging_weights, args,
                             train_dl_global,
                             test_dl_global,
                             comm_round=args.comm_round,
                             device=device)
+        save_weights(global_weights, "FedAvg_comm")
     
     elif args.comm_type == "fedma":
         comm_init_batch_weights = [copy.deepcopy(hungarian_weights) for _ in range(args.n_nets)]
 
-        fedma_comm(comm_init_batch_weights,
+        global_weights = fedma_comm(comm_init_batch_weights,
                                  model_meta_data, layer_type, net_dataidx_map,
                                  averaging_weights, args,
                                  train_dl_global,
@@ -1622,3 +1719,28 @@ if __name__ == "__main__":
                                  assignments_list,
                                  comm_round=args.comm_round,
                                  device=device)
+        save_weights(global_weights, "FedMA_comm")
+
+    elif args.comm_type == "fedma_fedavg":
+        comm_init_batch_weights = [copy.deepcopy(averaged_weights) for _ in range(args.n_nets)]
+
+        global_weights_fedavg = fedavg_comm(comm_init_batch_weights, model_meta_data, layer_type, 
+                            net_dataidx_map, 
+                            averaging_weights, args,
+                            train_dl_global,
+                            test_dl_global,
+                            comm_round=args.comm_round,
+                            device=device)
+        save_weights(global_weights_fedavg, "FedAvg_comm")
+
+        global_weights_fedma = fedma_comm(comm_init_batch_weights,
+                                 model_meta_data, layer_type, net_dataidx_map,
+                                 averaging_weights, args,
+                                 train_dl_global,
+                                 test_dl_global,
+                                 assignments_list,
+                                 comm_round=args.comm_round,
+                                 device=device)
+        save_weights(global_weights_fedavg, "FedMA_comm")
+        # analyze(models_1 = retrained_nets_fedavg, global_weights_1 = global_weights_fedavg, 
+        #         models_2 = retrained_nets_fedma, global_weights_2 = global_weights_fedma, args=args)

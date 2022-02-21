@@ -1,5 +1,6 @@
 """ die in dieser Datei befindlichen Methoden und Klassen im Zusammenhang mit dem Datensatz dienen als Referenz und müsse noch angepasst werden """
 
+import math 
 import os
 import numpy as np
 import torch
@@ -8,7 +9,9 @@ import logging
 import torchvision
 import torchvision.transforms as transforms
 import torch.utils.data as data
-from sklearn.metrics import confusion_matrix, multilabel_confusion_matrix
+from sklearn.metrics import confusion_matrix, multilabel_confusion_matrix, roc_auc_score
+import io
+import time
 
 # we've changed to a faster solver
 #from scipy.optimize import linear_sum_assignment
@@ -22,29 +25,13 @@ from combine_nets import prepare_uniform_weights, prepare_sanity_weights, prepar
 
 from vgg import *
 from model import *
-from model2 import *
 
-from typing import Any
-from types import FunctionType
 
-logging.basicConfig()
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
 
-""" These methods have been added additionally for the DenseNet
-taken from https://github.com/pytorch/vision/tree/main/torchvision """
-def _log_api_usage_once(obj: Any) -> None:
-    if not obj.__module__.startswith("torchvision"):
-        return
-    name = obj.__class__.__name__
-    if isinstance(obj, FunctionType):
-        name = obj.__name__
-    torch._C._log_api_usage_once(f"{obj.__module__}.{name}")
+logging.basicConfig(format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+                            datefmt='%H:%M:%S', level=logging.DEBUG)
+logger = logging.getLogger("utils")
 
-try:
-    from torch.hub import load_state_dict_from_url  # noqa: 401
-except ImportError:
-    from torch.utils.model_zoo import load_url as load_state_dict_from_url  # noqa: 401
 
 """ Original methods from the FedMA implementation """
 def mkdirs(dirpath):
@@ -65,14 +52,26 @@ def parse_class_dist(net_class_config):
 
     return cls_net_map
 
-def record_net_data_stats(y_train, net_dataidx_map, logdir):
+def record_net_data_stats(y_train, net_dataidx_map, logdir, dataset="chexpert"):
 
     net_cls_counts = {}
 
     for net_i, dataidx in net_dataidx_map.items():
-        unq, unq_cnt = np.unique(y_train[dataidx], return_counts=True)
-        tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}
-        net_cls_counts[net_i] = tmp
+        tmp_list = {}
+        if dataset == "chexpert":
+            for i in y_train.columns:
+                
+                class_count = 0
+                for x in dataidx:
+                    if y_train.iloc[x][i] == 1.0:
+                        class_count += 1
+                tmp = {i: class_count}
+                tmp_list.update(tmp)
+            net_cls_counts[net_i] = tmp_list
+        else:
+            unq, unq_cnt = np.unique(y_train[dataidx], return_counts=True)
+            tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}
+            net_cls_counts[net_i] = tmp
     logging.debug('Data statistics: %s' % str(net_cls_counts))
     return net_cls_counts
 
@@ -101,26 +100,48 @@ def partition_data(dataset, datadir, logdir, partition, n_nets, alpha, args):
         y_train = trainset.get_train_labels
         n_train = y_train.shape[0]
     elif dataset == 'chexpert':
+        logger.info("Load CheXpert data")
         X_train, y_train, X_test, y_test = load_chexpert_data(datadir) # evtl hier schon validation set einführen
-        n_train = X_train.shape[0]
+        n_train = y_train.shape[0]
+        logger.info("Total number of training data: %s" % n_train)
 
     # Note for the CheXpert dataset only partition "homo" is applicable
     if partition == "homo":
         if dataset == 'chexpert':
-            patients = list(set(y_train[0]))
+            logger.info("Assigning patients to local clients")
+            start_time = time.time()
+            logger.info("Start time is: " + str(start_time))
+            patients = list(set(X_train))
             patients = np.random.permutation(patients)
             batch_patients = np.array_split(patients, n_nets)
 
-            batch_idxs = [] * n_nets
+            help_list = [[0] for x in range(n_nets)]
 
             for i in range(n_train):
+                found_it = False
                 for n in range(n_nets):
+                    if found_it:
+                        break
                     for patient in batch_patients[n]:
-                        if patient == y_train[i]:
-                            batch_idxs[n].append(i)
+                        if patient == X_train[i]:
+                            help_list[n].append(i)
+                            found_it = True
+                            break
+                    
+            for n in range(n_nets):
+                help_list[n].pop(0)
             
-            net_dataidx_map = {i: batch_idxs[i] for i in range(n_nets)}
+            net_dataidx_map = {i: help_list[i] for i in range(n_nets)}
+            
+            logger.info("Assignment of patients done")
+            end_time = time.time()
+            logger.info("End time is: " + str(end_time))
+            duration = end_time - start_time
+            logger.info("Duration for partition: " + str(duration))
 
+            for i in range(n_nets):
+                dataidxs = net_dataidx_map[i]
+                logger.info("Network %s. n_training: %d" % (str(i), len(dataidxs)))
         else:
             idxs = np.random.permutation(n_train)
             batch_idxs = np.array_split(idxs, n_nets)
@@ -232,31 +253,112 @@ def load_cifar10_data(datadir):
 
 def load_chexpert_data(datadir): 
 
-    chexpert_train_ds = CheXpert_dataset(datadir, train=True, transform=True, no_labels = True)
-    chexpert_test_ds = CheXpert_dataset(datadir, train=False, transform=True, no_labels = True)
+    chexpert_train_ds = CheXpert_dataset(datadir, train=True, transform=True)
+    chexpert_test_ds = CheXpert_dataset(datadir, train=False, transform=True)
 
-    training_set = data.DataLoader(chexpert_train_ds, batch_size = chexpert_train_ds.__len__(), shuffle=True)
-    test_set = data.DataLoader(chexpert_test_ds, batch_size = chexpert_test_ds.__len__(), shuffle=True)
+    buffer_train = io.StringIO()
+    logger.info("Training dataset info:")
+    chexpert_train_ds.dataframe.info(verbose= False, memory_usage="deep", buf = buffer_train)
+    train_info = buffer_train.getvalue()
+    buffer_train.close()
+    logger.info(train_info)
+    buffer_test = io.StringIO()
+    logger.info("Testing dataset info:")
+    chexpert_test_ds.dataframe.info(verbose= False, memory_usage="deep", buf = buffer_test)
+    test_info = buffer_test.getvalue()
+    logger.info(test_info)
+    buffer_test.close()
 
-    X_train = next(iter(training_set))
-    X_test = next(iter(test_set))
-    y_train, y_test = None
+    # training_set = data.DataLoader(chexpert_train_ds, batch_size = chexpert_train_ds.__len__(), shuffle=True)
+    # test_set = data.DataLoader(chexpert_test_ds, batch_size = chexpert_test_ds.__len__(), shuffle=True)
+    observation_classes = [
+        "No Finding",
+        "Enlarged Cardiomediastinum",
+        "Cardiomegaly",
+        "Lung Opacity",
+        "Lung Lesion",
+        "Edema",
+        "Consolidation",
+        "Pneumonia",
+        "Atelectasis",
+        "Pneumothorax",
+        "Pleural Effusion",
+        "Pleural Other",
+        "Fracture",
+        "Support Devices"]
+
+    X_train = []
+    for x in chexpert_train_ds.dataframe["Path"]:
+        X_train.append(int(x[33:38]))
+    y_train = chexpert_train_ds.dataframe[observation_classes]
+    X_test = chexpert_test_ds.dataframe["Path"]
+    y_test = chexpert_test_ds.dataframe[observation_classes]
+    logger.info("CheXpert data loaded")
 
     return (X_train, y_train, X_test, y_test)
 
 def handle_uncertainty_labels(labels):
-    # apply the U-Ones approach for the class Atelectasis, U-Multiclass approach (for Cardiomegaly) is the default approach
+    # apply the U-Ones approach for the class Atelectasis, for the other classes apply the U-Zeroes approach
+    
     for x in labels:
-        if (x[13] == 0):
-            x[13] = 1
+        for i in range(14):
+            if (x[i] == -1):
+                x[i] = 0
+            elif (i == 8 and x[8] == 0):
+                x[8] = 1
+            
     return labels
 
 def handle_single_uncertainty_label(label):
     # apply the U-Ones approach for the class Atelectasis, U-Multiclass approach (for Cardiomegaly) is the default approach
     
-    if (label[13] == 0):
-        label[13] = 1
-    return label       
+    if (label[8] == 0):
+        label[8] = 1
+    return label   
+
+def handle_NaN_values(labels):
+
+    for x in labels:
+        for i in range(14):
+            if math.isnan(x[i]):
+                x[i] = 0  
+    return labels  
+
+def compute_auroc(model, dataloader, device="cpu", dataset=None):
+
+    logger.info("Calculate auroc score")
+    was_training = False
+    if model.training:
+        model.eval()
+        was_training = True
+
+    target =  np.array([])
+    out =  np.array([])
+    for batch_idx, (x, target_b) in enumerate(dataloader):
+            target_b = handle_uncertainty_labels(target_b)
+            target_b = handle_NaN_values(target_b)
+            # target_b = torch.tensor(target_b)
+            x, target_b = x.to(device), target_b.to(device)
+            out_b = model(x)
+            #logger.info(out_b)
+            target = np.append(target, target_b.tolist())
+            out = np.append(out, out_b.tolist())
+    
+    target = np.reshape(target, (-1, 14))
+    out = np.reshape(out, (-1, 14))
+    logger.info("Exemplary target values for one entry")
+    logger.info(target[0])
+    logger.info("Exemplary output values for one entry")
+    logger.info(out[0])
+    #NaN values zu 0 umwandeln für target
+    # roc_auc_score nicht für multilabel multiclass problems --> auf multilabel problem reduziert
+    
+    auroc = roc_auc_score(target, out)
+
+    if was_training:
+        model.train()
+    logger.info("auroc score calculated")
+    return auroc
 
 def compute_accuracy(model, dataloader, get_confusion_matrix=False, device="cpu", dataset=None):
 
@@ -270,30 +372,36 @@ def compute_accuracy(model, dataloader, get_confusion_matrix=False, device="cpu"
     correct, total = 0, 0
     with torch.no_grad():
         for batch_idx, (x, target) in enumerate(dataloader):
-            handle_uncertainty_labels(target)
-            if dataset == "chexpert":
-                target_new = []
-                for x in range(len(target)):
-                    target_new.append(target[x][1:15])
-                target = target_new    
+            target = handle_uncertainty_labels(target)
+               
             x, target = x.to(device), target.to(device)
             out = model(x)
+        
             _, pred_label = torch.max(out.data, 1)
             if dataset == "chexpert":
                 pred_label = []
-                for i in  out:
-                    if i >= 0.5:
-                        pred_label.append(1)
-                    elif i <= -0.5:
-                        pred_label.append(-1)
-                    elif (i < 0.5 and i > -0.5):
-                        pred_label.append(0)
-                    else:
-                        pred_label.append(None)
+                for pred in  out:
+                    pred_row = []
+                    for i in pred:
+                        if i >= 0.5:
+                            pred_row.append(1)
+                        elif i <= -0.5:
+                            pred_row.append(-1)
+                        elif (i < 0.5 and i > -0.5):
+                            pred_row.append(0)
+                        else:
+                            pred_row.append(None)
+                    pred_label.append(pred_row)
 
-            total += x.data.size()[0]
-            correct += (pred_label == target.data).sum().item() # hier evtl aufpassen
-
+            for i in range(len(target)):
+                for l in range(len(target[i])):
+                    if not math.isnan(target[i][l].item()):
+                        total += 1
+                        if (pred_label[i][l] == target[i][l].item()):
+                            correct += 1
+            # total += x.data.size()[0]
+            # correct += (pred_label == target.data).sum().item() # hier evtl aufpassen
+            pred_label = torch.tensor(pred_label)
             if device == "cpu":
                 pred_labels_list = np.append(pred_labels_list, pred_label.numpy())
                 true_labels_list = np.append(true_labels_list, target.data.numpy())
@@ -302,6 +410,7 @@ def compute_accuracy(model, dataloader, get_confusion_matrix=False, device="cpu"
                 true_labels_list = np.append(true_labels_list, target.data.cpu().numpy())               
 
     if get_confusion_matrix:
+        logger.info("Calculate confusion matrix")
         if dataset == "chexpert":
             conf_matrix = multilabel_confusion_matrix(true_labels_list, pred_labels_list)
         else:
@@ -349,6 +458,7 @@ def init_models(net_configs, n_nets, args):
     Initialize the local LeNets
     Please note that this part is hard coded right now
     '''
+    from model2 import densenet121
 
     cnns = {net_i: None for net_i in range(n_nets)}
 
@@ -389,9 +499,27 @@ def save_model(model, model_index):
         torch.save(model.state_dict(), f_)
     return
 
+def save_weights(weights, alias):
+    logger.info("saving weights-{}".format(alias))
+    with open("./saved_weights/trained_weights"+str(alias), "wb") as f_:
+        torch.save(weights, f_)
+    return
+
+def load_weights(alias):
+    logger.info("loading weights-{}".format(alias))
+    with open("./saved_weights/trained_weights"+str(alias), "rb") as f_:
+        weights = torch.load(f_)
+    return weights
+
 def load_model(model, model_index, rank=0, device="cpu"):
     #
     with open("trained_local_model"+str(model_index), "rb") as f_:
+        model.load_state_dict(torch.load(f_))
+    model.to(device)
+    return model
+
+def load_model_from_folder(folder, model, model_index, rank=0, device="cpu"):
+    with open(folder+"trained_local_model"+str(model_index), "rb") as f_:
         model.load_state_dict(torch.load(f_))
     model.to(device)
     return model
@@ -462,11 +590,17 @@ def get_dataloader(dataset, datadir, train_bs, test_bs, dataidxs=None):
             transforms.Normalize(mean=cinic_mean,std=cinic_std)])), batch_size=test_bs, shuffle=False)
 
     elif dataset == 'chexpert':
+        if dataidxs != None:
+            local = True
+        else:
+            local = False
         training_set = CheXpert_dataset(datadir, train=True, transform=True, dataidxs=dataidxs)
-        test_set = CheXpert_dataset(datadir, train=False, transform=True)
+        test_set = CheXpert_dataset(datadir, train=False, transform=True, local = local)
 
-        train_dl = data.DataLoader(dataset=training_set, batch_size=train_bs, shuffle=True)
-        test_dl = data.DataLoader(dataset=test_set, batch_size=test_bs, shuffle=False)
+        logger.info("Training data after indexing: {}".format(training_set.__len__()))
+
+        train_dl = data.DataLoader(dataset=training_set, batch_size=train_bs, shuffle=True, num_workers=16)
+        test_dl = data.DataLoader(dataset=test_set, batch_size=test_bs, shuffle=False, num_workers=16)
 
     return train_dl, test_dl
 
@@ -527,6 +661,45 @@ def pdm_prepare_freq(cls_freqs, n_classes):
 
     return freqs
 
+def compute_ensemble_auroc(models: list, dataloader, n_classes, train_cls_counts=None, uniform_weights=False, sanity_weights=False, device="cpu", dataset = None):
+
+    was_training = [False]*len(models)
+    for i, model in enumerate(models):
+        if model.training:
+            was_training[i] = True
+            model.eval()
+
+    if uniform_weights is True:
+        weights_list = prepare_uniform_weights(n_classes, len(models))
+    elif sanity_weights is True:
+        weights_list = prepare_sanity_weights(n_classes, len(models))
+    else:
+        weights_list = prepare_weight_matrix(n_classes, train_cls_counts)
+
+    weights_norm = normalize_weights(weights_list)
+    
+    target = []
+    out = []
+    with torch.no_grad():
+        for batch_idx, (x, target_b) in enumerate(dataloader):
+                target_b = handle_uncertainty_labels(target_b)
+                target_b = handle_NaN_values(target_b)
+                x, target_b = x.to(device), target_b.to(device)
+                # target_b = target_b.long()
+                out_b = get_weighted_average_pred(models, weights_norm, x, device=device)
+
+                target.append(target_b.tolist())
+                out.append(out_b.tolist())
+
+    target = np.reshape(target, (-1, 14))
+    out = np.reshape(out, (-1, 14))
+
+    auroc = roc_auc_score(target, out)
+
+    if was_training:
+        model.train()
+    logger.info("auroc score calculated")
+    return auroc
 
 def compute_ensemble_accuracy(models: list, dataloader, n_classes, train_cls_counts=None, uniform_weights=False, sanity_weights=False, device="cpu", dataset = None):
 
@@ -550,12 +723,8 @@ def compute_ensemble_accuracy(models: list, dataloader, n_classes, train_cls_cou
 
     with torch.no_grad():
         for batch_idx, (x, target) in enumerate(dataloader):
-            handle_uncertainty_labels(target)
-            if dataset == "chexpert":
-                target_new = []
-                for x in range(len(target)):
-                    target_new.append(target[x][1:15])
-                target = target_new  
+            target = handle_uncertainty_labels(target)
+    
             x, target = x.to(device), target.to(device)
             target = target.long()
             out = get_weighted_average_pred(models, weights_norm, x, device=device)
