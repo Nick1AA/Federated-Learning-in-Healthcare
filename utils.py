@@ -32,7 +32,60 @@ logging.basicConfig(format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(messa
                             datefmt='%H:%M:%S', level=logging.DEBUG)
 logger = logging.getLogger("utils")
 
+""" New Method """
+def densenet_index(layer_index):
+    if layer_index <= 2:
+        this_index = layer_index -1
+    elif layer_index == 3:
+        this_index = 6
+    else:
+        if layer_index % 2 == 0:
+            even_number = True
+        else:
+            even_number = False
+        if even_number:
+            this_index = 11 + (layer_index - 4) * 3 
+        else:
+            this_index = 11 + (layer_index - 5) * 3 + 1
+    return this_index
 
+def densenet_index_2(layer_index):
+    if layer_index <= 1:
+        this_index = layer_index -1
+    else:
+        this_index = 11 + (layer_index - 2) * 6
+    
+    return this_index
+
+def densenet_index_to_layer(index):
+    #notice layer index starts here with 0 and above at 1
+    if index <= 1:
+        layer_index = index
+    elif index <=5:
+        layer_index = 1
+    elif index <= 10:
+        layer_index = 2
+    elif (index+1) % 6 == 0:
+        layer_index = (index-11) / 3 + 3
+    elif index == 726:
+        layer_index = 247
+    else:
+        help = (index+1) % 6
+        layer_index = (index - help - 11) / 3 + 4
+    return layer_index
+
+def densenet_index_to_layer_2(index):
+    #notice layer index starts here with 0 and above at 1
+    if index <= 10:
+        layer_index = 0
+    elif (index+1) % 6 == 0:
+        layer_index = (index-11) / 6 + 1
+    elif index == 726:
+        layer_index = 120
+    else:
+        help = (index+1) % 6
+        layer_index = (index - help - 11) / 6 + 1
+    return layer_index
 """ Original methods from the FedMA implementation """
 def mkdirs(dirpath):
     try:
@@ -109,8 +162,6 @@ def partition_data(dataset, datadir, logdir, partition, n_nets, alpha, args):
     if partition == "homo":
         if dataset == 'chexpert':
             logger.info("Assigning patients to local clients")
-            start_time = time.time()
-            logger.info("Start time is: " + str(start_time))
             patients = list(set(X_train))
             patients = np.random.permutation(patients)
             batch_patients = np.array_split(patients, n_nets)
@@ -134,10 +185,6 @@ def partition_data(dataset, datadir, logdir, partition, n_nets, alpha, args):
             net_dataidx_map = {i: help_list[i] for i in range(n_nets)}
             
             logger.info("Assignment of patients done")
-            end_time = time.time()
-            logger.info("End time is: " + str(end_time))
-            duration = end_time - start_time
-            logger.info("Duration for partition: " + str(duration))
 
             for i in range(n_nets):
                 dataidxs = net_dataidx_map[i]
@@ -627,7 +674,7 @@ def pdm_prepare_full_weights_cnn(nets, device="cpu"):
                         if len(_weight_shape) == 4:
                             net_weights.append(v.numpy().reshape(_weight_shape[0], _weight_shape[1]*_weight_shape[2]*_weight_shape[3]))
                         else:
-                            pass
+                            net_weights.append(v.numpy())
                     else:
                         net_weights.append(v.numpy())
             else:
@@ -642,7 +689,7 @@ def pdm_prepare_full_weights_cnn(nets, device="cpu"):
                         if len(_weight_shape) == 4:
                             net_weights.append(v.cpu().numpy().reshape(_weight_shape[0], _weight_shape[1]*_weight_shape[2]*_weight_shape[3]))
                         else:
-                            pass
+                            net_weights.append(v.cpu().numpy())
                     else:
                         net_weights.append(v.cpu().numpy())
         weights.append(net_weights)
@@ -651,11 +698,12 @@ def pdm_prepare_full_weights_cnn(nets, device="cpu"):
 def pdm_prepare_freq(cls_freqs, n_classes):
     freqs = []
 
-    for net_i in sorted(cls_freqs.keys()):
+    for net_i in range(len(cls_freqs)):
         net_freqs = [0] * n_classes
-
-        for cls_i in cls_freqs[net_i]:
-            net_freqs[cls_i] = cls_freqs[net_i][cls_i]
+        current_class = 0
+        for cls_i in cls_freqs[net_i].keys():
+            net_freqs[current_class] = cls_freqs[net_i][cls_i]
+            current_class += 1
 
         freqs.append(np.array(net_freqs))
 
@@ -678,8 +726,8 @@ def compute_ensemble_auroc(models: list, dataloader, n_classes, train_cls_counts
 
     weights_norm = normalize_weights(weights_list)
     
-    target = []
-    out = []
+    target =  np.array([])
+    out =  np.array([])
     with torch.no_grad():
         for batch_idx, (x, target_b) in enumerate(dataloader):
                 target_b = handle_uncertainty_labels(target_b)

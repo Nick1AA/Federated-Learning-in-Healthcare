@@ -247,8 +247,11 @@ class DenseNet(nn.Module):
         out = F.adaptive_avg_pool2d(out, (1, 1))
         out = torch.flatten(out, 1)
         out = self.classifier(out)
-        scaler = MinMaxScaler()
-        out = scaler.fit_transform()
+        # out = F.sigmoid(out)
+        # scaler = MinMaxScaler()
+        # to_scale = out.detach().numpy()
+        # out = scaler.fit_transform(to_scale)
+        # out = torch.tensor(out)
         return out
 
 
@@ -356,7 +359,7 @@ class _DenseLayerContainer(nn.Module):
         self.add_module("relu2", nn.ReLU(inplace=True))
         self.conv2: nn.Conv2d
         self.add_module(
-            "conv2", nn.Conv2d(num_filters[starting_index + 2], num_filters[+3], kernel_size=3, stride=1, padding=1, bias=False)
+            "conv2", nn.Conv2d(num_filters[starting_index + 2], num_filters[starting_index+3], kernel_size=3, stride=1, padding=1, bias=False)
         )
         self.drop_rate = float(drop_rate)
         self.memory_efficient = memory_efficient
@@ -503,10 +506,10 @@ class DenseNetContainer(nn.Module):
             total = total +  num_layers * 4
             self.features.add_module("denseblock%d" % (i + 1), block)
             if i != len(block_config) - 1:
-                trans = _TransitionContainer(num_input_features=num_filters[total], num_output_features=num_filters[total + 1] // 2)
+                trans = _TransitionContainer(num_input_features=num_filters[total], num_output_features=num_filters[total + 1] )
                 self.features.add_module("transition%d" % (i + 1), trans)
-                num_features = num_features // 2
-            total += 2
+                total += 2
+            
 
         # Final batch norm
         self.features.add_module("norm5", nn.BatchNorm2d(num_filters[total]))
@@ -530,8 +533,11 @@ class DenseNetContainer(nn.Module):
         out = F.adaptive_avg_pool2d(out, (1, 1))
         out = torch.flatten(out, 1)
         out = self.classifier(out)
-        scaler = MinMaxScaler()
-        out = scaler.fit_transform()
+        # out = F.sigmoid(out)
+        # scaler = MinMaxScaler()
+        # to_scale = out.detach().numpy()
+        # out = scaler.fit_transform(to_scale)
+        # out = torch.tensor(out, requires_grad = True)
         return out
 
 def _densenetContainer(

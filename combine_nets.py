@@ -3,9 +3,9 @@ import torch.nn.functional as F
 import numpy as np
 import logging
 
-logging.basicConfig(filename='./logs/simulation.log', filemode='a', format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+logging.basicConfig(format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
                             datefmt='%H:%M:%S', level=logging.INFO)
-logger = logging.getLogger()
+logger = logging.getLogger("combine_nets")
 
 
 

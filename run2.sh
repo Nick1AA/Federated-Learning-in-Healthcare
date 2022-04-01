@@ -11,4 +11,4 @@ python main.py --model=densenet121 \
 --comm_type=fedma_fedavg \
 --comm_round=10 \
 --oneshot_matching= \
---retrain=True 
+--retrain= 

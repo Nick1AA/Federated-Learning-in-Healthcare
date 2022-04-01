@@ -25,9 +25,9 @@ from pathlib import Path
 
 
 sys.path.append('/pfs/work7/workspace/scratch/sq8430-conda/conda/envs/FedMA-CheXpert/lib/python3.6/site-packages')
-logging.basicConfig()
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+logging.basicConfig(format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+                            datefmt='%H:%M:%S', level=logging.DEBUG)
+logger = logging.getLogger("datasets")
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
 IMG_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.ppm', '.bmp', '.pgm', '.tif', '.tiff', '.webp')
@@ -109,7 +109,12 @@ class CheXpert_dataset(data.Dataset):
             indices = elements[0]
             self.dataframe = self.dataframe.iloc[indices]
         if (transform):
-            self.transform = transforms.Compose([transforms.Resize((320, 320)), transforms.ToTensor()])
+            self.transform = transforms.Compose([
+                transforms.Resize((320, 320)), 
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                ])
         
         # self.data, self.target = self.__build_truncated_dataset__()
         # Liste der Daten mit Attribute Person, ID und co
@@ -129,11 +134,18 @@ class CheXpert_dataset(data.Dataset):
         else:
             image = dir_path + "/data/" + self.dataframe.iloc[index]["Path"]
             # image = "/scratch/" + self.dataframe.iloc[index]["Path"]
-            path = Path(image)
-            if path.is_file():
-                image = Image.open(image)
-            image = image.convert(mode='RGB')    
+            # path = Path(image)
+            # if path.is_file():
+            #     image = Image.open(image)
+            # image = image.convert(mode='RGB') 
+            if index == 1:
+                logger.info("Opening image " + str(index))
+            image = pil_loader(image)   
+            if index == 1:
+                logger.info("Image " + str(index) + " opened")
             image = self.transform(image)
+            if index == 1:    
+                logger.info("Image " + str(index) + " transformed")
             labels = []
             for x in range(1, 15): 
                 labels.append(self.dataframe.iloc[index][x])

@@ -30,11 +30,13 @@ def compute_model_averaging_accuracy(models, weights, train_dl, test_dl, n_class
 
     # handle the conv layers part which is not changing
     for param_idx, (key_name, param) in enumerate(avg_cnn.state_dict().items()):
-        if "conv" in key_name or "features" in key_name:
+        if "conv" in key_name:
             if "weight" in key_name:
                 temp_dict = {key_name: torch.from_numpy(weights[param_idx].reshape(param.size()))}
             elif "bias" in key_name:
                 temp_dict = {key_name: torch.from_numpy(weights[param_idx])}
+        elif "norm" in key_name:
+            temp_dict = {key_name: torch.from_numpy(weights[param_idx])}
         elif "fc" in key_name or "classifier" in key_name:
             if "weight" in key_name:
                 temp_dict = {key_name: torch.from_numpy(weights[param_idx].T)}
@@ -123,9 +125,9 @@ def compute_full_cnn_accuracy(models, weights, train_dl, test_dl, n_classes, dev
                                         output_dim=10)
     elif args.model == "densenet121":
         num_filters = []
-        # densenet121 hat insgesamt 241 conv oder norm Schichten und eine classifier Schicht
-        for i in range (0, 242):
-            num_filters.append(weights[2*i].shape[0])
+        # densenet121 hat insgesamt 320 conv oder norm Schichten inkl. eine classifier Schicht
+        for i in range (1, 321):
+            num_filters.append(weights[densenet_index(i)].shape[0])
         matched_cnn = densenet121Container(num_filters = num_filters)
     elif args.model == "moderate-cnn":
         #[(35, 27), (35,), (68, 315), (68,), (132, 612), (132,), (132, 1188), (132,), 
@@ -157,11 +159,13 @@ def compute_full_cnn_accuracy(models, weights, train_dl, test_dl, n_classes, dev
         #print("&"*30)
         #print("Key: {}, Weight Shape: {}, Matched weight shape: {}".format(key_name, param.size(), weights[param_idx].shape))
         #print("&"*30)
-        if "conv" in key_name or "features" in key_name:
+        if "conv" in key_name:
             if "weight" in key_name:
                 temp_dict = {key_name: torch.from_numpy(weights[param_idx].reshape(param.size()))}
             elif "bias" in key_name:
                 temp_dict = {key_name: torch.from_numpy(weights[param_idx])}
+        elif "norm" in key_name:
+            temp_dict = {key_name: torch.from_numpy(weights[param_idx])}
         elif "fc" in key_name or "classifier" in key_name:
             if "weight" in key_name:
                 temp_dict = {key_name: torch.from_numpy(weights[param_idx].T)}
