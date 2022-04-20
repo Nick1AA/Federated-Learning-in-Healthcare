@@ -2785,7 +2785,7 @@ def BBP_MAP_not_layerwise(nets_list, model_meta_data, layer_type, net_dataidx_ma
     first_fc_index = None
     matched_weights = []
     for layer_index in range(1, n_layers):
-        layer_hungarian_weights, assignment, L_next = layer_wise_group_descent(
+        layer_hungarian_weights, assignment, L_next = layer_wise_group_descent_all_param(
              batch_weights=batch_weights, 
              layer_index=layer_index,
              sigma0_layers=sigma0, 
@@ -3441,8 +3441,8 @@ if __name__ == "__main__":
     #hungarian_weights = load_weights("FedMA_no_comm")
     #assignments_list = load_weights("FedMA_no_comm_assignments")
     logger.info("BBP_MAP finished")
-    save_weights(hungarian_weights, "FedMA_no_comm_not_layerwise")
-    save_weights(assignments_list, "FedMA_no_comm_assignments_not_layerwise")
+    save_weights(hungarian_weights, "FedMA_no_comm_not_layerwise_all_param")
+    save_weights(assignments_list, "FedMA_no_comm_assignments_not_layerwise_all_param")
     ## averaging models 
     ## we need to switch to real FedAvg implementation 
     ## FedAvg is originally proposed at: here: https://arxiv.org/abs/1602.05629
@@ -3463,7 +3463,7 @@ if __name__ == "__main__":
     for aw in averaged_weights:
         logger.info(aw.shape)
 
-    save_weights(averaged_weights, "FedAvg_no_comm_not_layerwise")
+    save_weights(averaged_weights, "FedAvg_no_comm_not_layerwise_all_param")
 
     models = nets_list
     # _ = compute_full_cnn_accuracy(models,
@@ -3567,7 +3567,7 @@ if __name__ == "__main__":
                             comm_round=args.comm_round,
                             device=device)
         logger.info("FedAvg with communication finished")
-        save_weights(global_weights_fedavg, "FedAvg_comm_not_layerwise")
+        save_weights(global_weights_fedavg, "FedAvg_comm_not_layerwise_all_param")
 
         comm_init_batch_weights = [copy.deepcopy(hungarian_weights) for _ in range(args.n_nets)]
         logger.info("Start FedMA with communication")
@@ -3580,6 +3580,6 @@ if __name__ == "__main__":
                                  comm_round=args.comm_round,
                                  device=device)
         logger.info("FedMA with communication finished")
-        save_weights(global_weights_fedma, "FedMA_comm_not_layerwise")
+        save_weights(global_weights_fedma, "FedMA_comm_not_layerwise_all_param")
         # analyze(models_1 = retrained_nets_fedavg, global_weights_1 = global_weights_fedavg, 
         #         models_2 = retrained_nets_fedma, global_weights_2 = global_weights_fedma, args=args)

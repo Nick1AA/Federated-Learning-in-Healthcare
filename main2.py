@@ -3313,7 +3313,7 @@ def fedma_comm_not_layerwise_2(batch_weights, model_meta_data, layer_type, net_d
         del hungarian_weights
     adapted_weights = []
     for worker_index in range(args.n_nets):
-        new_weights = match_global_to_local_weights(batch_weights, assignments_list, worker_index, not_layerwise=True )
+        new_weights = match_global_to_local_weights_2(batch_weights, assignments_list, worker_index, not_layerwise=True )
         adapted_weights.append(new_weights)
     return adapted_weights
 
@@ -3437,12 +3437,12 @@ if __name__ == "__main__":
 
     # this is for PFNM
     logger.info("Start BBP_MAP")
-    hungarian_weights, assignments_list = BBP_MAP_not_layerwise(nets_list, model_meta_data, layer_type, net_dataidx_map, averaging_weights, args, device=device)
+    hungarian_weights, assignments_list = BBP_MAP_not_layerwise_2(nets_list, model_meta_data, layer_type, net_dataidx_map, averaging_weights, args, device=device)
     #hungarian_weights = load_weights("FedMA_no_comm")
     #assignments_list = load_weights("FedMA_no_comm_assignments")
     logger.info("BBP_MAP finished")
-    save_weights(hungarian_weights, "FedMA_no_comm_not_layerwise")
-    save_weights(assignments_list, "FedMA_no_comm_assignments_not_layerwise")
+    save_weights(hungarian_weights, "FedMA_no_comm_not_layerwise_2")
+    save_weights(assignments_list, "FedMA_no_comm_assignments_not_layerwise_2")
     ## averaging models 
     ## we need to switch to real FedAvg implementation 
     ## FedAvg is originally proposed at: here: https://arxiv.org/abs/1602.05629
@@ -3463,7 +3463,7 @@ if __name__ == "__main__":
     for aw in averaged_weights:
         logger.info(aw.shape)
 
-    save_weights(averaged_weights, "FedAvg_no_comm_not_layerwise")
+    save_weights(averaged_weights, "FedAvg_no_comm__not_layerwise_2")
 
     models = nets_list
     # _ = compute_full_cnn_accuracy(models,
@@ -3477,7 +3477,7 @@ if __name__ == "__main__":
     overall_train_auroc = 0
     overall_test_auroc = 0
 
-    train_auroc_list, test_auroc_list = compute_local_model_auroc(models,
+    train_auroc_list, test_auroc_list = compute_local_model_auroc_2(models,
                             hungarian_weights,
                             assignments_list,
                             net_dataidx_map,
@@ -3498,7 +3498,7 @@ if __name__ == "__main__":
     logger.info("===================================================================")
     overall_global_test_auroc = 0
 
-    global_test_auroc_list = compute_local_model_auroc_global_dataset(models,
+    global_test_auroc_list = compute_local_model_auroc_global_dataset_2(models,
                             hungarian_weights,
                             assignments_list,
                             test_dl_global,
@@ -3567,11 +3567,11 @@ if __name__ == "__main__":
                             comm_round=args.comm_round,
                             device=device)
         logger.info("FedAvg with communication finished")
-        save_weights(global_weights_fedavg, "FedAvg_comm_not_layerwise")
+        save_weights(global_weights_fedavg, "FedAvg_comm_not_layerwise_2")
 
         comm_init_batch_weights = [copy.deepcopy(hungarian_weights) for _ in range(args.n_nets)]
         logger.info("Start FedMA with communication")
-        global_weights_fedma = fedma_comm_not_layerwise(comm_init_batch_weights,
+        global_weights_fedma = fedma_comm_not_layerwise_2(comm_init_batch_weights,
                                  model_meta_data, layer_type, net_dataidx_map,
                                  averaging_weights, args,
                                  train_dl_global,
@@ -3580,6 +3580,6 @@ if __name__ == "__main__":
                                  comm_round=args.comm_round,
                                  device=device)
         logger.info("FedMA with communication finished")
-        save_weights(global_weights_fedma, "FedMA_comm_not_layerwise")
+        save_weights(global_weights_fedma, "FedMA_comm_not_layerwise_2")
         # analyze(models_1 = retrained_nets_fedavg, global_weights_1 = global_weights_fedavg, 
         #         models_2 = retrained_nets_fedma, global_weights_2 = global_weights_fedma, args=args)

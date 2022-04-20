@@ -1,6 +1,7 @@
 """ hier sind noch einige Methoden enthalten, welche vom Namen her relevant klingen, aber nicht standardmäßig aufgerufen werden """
 
-from utils import densenet_index, densenet_index_2
+from model2 import densenet121Container
+from utils import densenet_index, densenet_index_2, densenet_index_to_layer_2, densenet_index_to_layer, densenet_index_3, densenet_index_to_layer_3
 from .utils import *
 from .utils2 import densenet121Flex
 import copy
@@ -135,17 +136,19 @@ def block_patching(w_j, L_next, assignment_j_c, layer_index, model_meta_data,
     # logger.info('--'*15)
     if assignment_j_c is None:
         return w_j
-    logger.info("Those are the model meta data")
-    logger.info(model_meta_data)
+    # logger.info("Those are the model meta data")
+    # logger.info(model_meta_data)
     layer_meta_data = model_meta_data[densenet_index(layer_index)]
-    logger.info("Those are the layer meta data")
-    logger.info(layer_meta_data)
-    prev_layer_meta_data = model_meta_data[densenet_index(layer_index)]
+    # logger.info("Those are the layer meta data")
+    # logger.info(layer_meta_data)
+    prev_layer_meta_data = model_meta_data[densenet_index(layer_index-1)]
 
     logger.info("Those are the assignments")
     logger.info(assignment_j_c)
+    logger.info("this is the layer type")
+    logger.info(layer_type)
 
-    if layer_type == "conv":    
+    if "conv" == layer_type:    
         new_w_j = np.zeros((w_j.shape[0], L_next*(layer_meta_data[-1]**2)))
 
         # we generate a sequence of block indices
@@ -154,21 +157,76 @@ def block_patching(w_j, L_next, assignment_j_c, layer_index, model_meta_data,
         for ori_id in range(layer_meta_data[1]):
             new_w_j[:, block_indices[assignment_j_c[ori_id]]] = w_j[:, ori_block_indices[ori_id]]
 
-    if layer_type == "norm":    
+    elif "conv" in layer_type:
+    
+        if "denselayer1" in layer_type:
+            num_filters = L_next
+        else:
+            num_filters = L_next + w_j[densenet_index(layer_index-5)].shape[0] 
+            init_filters =  w_j[densenet_index(layer_index-5)].shape[0]   
+        new_w_j = np.zeros((w_j[densenet_index(layer_index)].shape[0], num_filters*(layer_meta_data[-1]**2)))
+
+        # we generate a sequence of block indices
+        if "denselayer1" in layer_type:
+            block_indices = [np.arange(i*layer_meta_data[-1]**2, (i+1)*layer_meta_data[-1]**2) for i in range(L_next)]
+            ori_block_indices = [np.arange(i*layer_meta_data[-1]**2, (i+1)*layer_meta_data[-1]**2) for i in range(layer_meta_data[1])]
+            for ori_id in range(layer_meta_data[1]):
+                new_w_j[:, block_indices[assignment_j_c[ori_id]]] = w_j[densenet_index(layer_index)][:, ori_block_indices[ori_id]]
+        else:
+            block_indices = [np.arange(i*layer_meta_data[-1]**2, (i+1)*layer_meta_data[-1]**2) for i in range(num_filters)]
+            ori_block_indices = [np.arange(i*layer_meta_data[-1]**2, (i+1)*layer_meta_data[-1]**2) for i in range(layer_meta_data[1])]
+            for ori_id in range(layer_meta_data[1]):
+                new_w_j[:, block_indices[init_filters + assignment_j_c[ori_id]]] = w_j[densenet_index(layer_index)][:, ori_block_indices[init_filters + ori_id]]
+            for j in range(init_filters):
+                new_w_j[:, block_indices[j]] = w_j[densenet_index(layer_index)][:, ori_block_indices[j]]
+
+
+    elif "norm" in layer_type:    
         #new_w_j = np.zeros((w_j.shape[0], L_next))# originally np.zeros((w_j.shape[0], L_next*(layer_meta_data[-1]**2)))
 
         # we generate a sequence of block indices
         #block_indices = [i for i in range(L_next)]# originally [np.arange(i*layer_meta_data[-1]**2, (i+1)*layer_meta_data[-1]**2) for i in range(L_next)]
         #ori_block_indices = [i for i in range(1)] # originally [np.arange(i*layer_meta_data[-1]**2, (i+1)*layer_meta_data[-1]**2) for i in range(1)]
-        new_w_j = [[] for j in range(5)]
-        for i in range (4):
-            logging.info("Layer {}, with shape {}".format(densenet_index(layer_index) +i, w_j[densenet_index(layer_index)+i].shape))
-            new_w_j_small = np.zeros((L_next, 1))
-            for j in range(len(assignment_j_c)):
-                new_w_j_small[assignment_j_c[j]] = w_j[densenet_index(layer_index)+i][j] 
-            new_w_j[i] = new_w_j_small       
-        new_w_j = np.array(new_w_j)          
+        if "norm1" not in layer_type and "transition" not in layer_type:
+            new_w_j = [[] for j in range(5)]
+            for i in range (4):
+                # logging.info("Layer {}, with shape {}".format(densenet_index(layer_index) +i, w_j[densenet_index(layer_index)+i].shape))
+                new_w_j_small = np.zeros((L_next, 1))
+                for j in range(len(assignment_j_c)):
+                    new_w_j_small[assignment_j_c[j]] = w_j[densenet_index(layer_index)+i][j] 
+                new_w_j[i] = new_w_j_small       
+            new_w_j = np.array(new_w_j)          
                     # orginially w_j[:, ori_block_indices[ori_id]]
+        else:
+            # if len(layer_type) == 45:
+            #     layer_nr = int(layer_type[layer_type.index("denselayer")+10])
+            # else:
+            #     layer_nr = int(layer_type[layer_type.index("denselayer")+10:layer_type.index("denselayer")+11])
+            if "denselayer1" in layer_type:
+                num_filters = L_next
+            else:
+                num_filters = L_next + w_j[densenet_index(layer_index-4)].shape[0]
+                init_filters = w_j[densenet_index(layer_index-4)].shape[0]
+                new_filters = L_next
+            # init_num_filters = w_j[densenet_index(layer_index-(-3 + layer_nr*4))].shape[0]
+            # prev_assignment = prev_assignments[layer_index-4]
+            new_w_j = [[] for j in range(5)]
+            for i in range (4):
+                current_size = w_j[densenet_index(layer_index)+i].shape[0]
+                new_w_j_small = np.zeros((num_filters, 1))
+                for j in range(len(assignment_j_c)):
+                    if "denselayer1" in layer_type:
+                        new_w_j_small[assignment_j_c[j]] = w_j[densenet_index(layer_index)+i][j] 
+                    else:
+                        new_w_j_small[current_size - len(assignment_j_c) + assignment_j_c[j]] = w_j[densenet_index(layer_index)+i][current_size - len(assignment_j_c) + j]
+                if "denselayer1" not in layer_type:
+                    for j in range(current_size - len(assignment_j_c)):
+                        new_w_j_small[j] = w_j[densenet_index(layer_index)+i][j]
+                #     for j in range(len(prev_assignment)):
+                #         new_w_j_small[prev_assignment[j]] = w_j[densenet_index(layer_index)+i][j]
+                new_w_j[i] = new_w_j_small       
+            new_w_j = np.array(new_w_j)              
+            
 
     elif layer_type == "fc":
         # we need to estimate the output shape here:
@@ -292,6 +350,134 @@ def block_patching_2(w_j, L_next, assignment_j_c, layer_index, model_meta_data,
     # do a double check logger.infoing here:
     #logger.info("{}".format(np.array_equal(new_w_j[:, block_indices[4]], w_j[:, ori_block_indices[0]])))
     return new_w_j
+
+def block_patching_3(weights, matching_weights, L_next, assignment_j_c, layer_index, model_meta_data, 
+                                matching_shapes=None, 
+                                layer_type="fc", 
+                                dataset="cifar10",
+                                network_name="lenet"):
+    """
+    In CNN, weights patching needs to be handled block-wisely
+    We handle all conv layers and the first fc layer connected with the output of conv layers here
+    """
+    # logger.info('--'*15)
+    # logger.info("ori w_j shape: {}".format(w_j.shape))
+    # logger.info("L_next: {}".format(L_next))
+    # logger.info("assignment_j_c: {}, length of assignment: {}".format(assignment_j_c, len(assignment_j_c)))
+    # logger.info("correspoding meta data: {}".format(model_meta_data[2 * layer_index - 2]))
+    # logger.info("layer index: {}".format(layer_index))
+    # logger.info('--'*15)
+    if assignment_j_c is None:
+        return w_j
+    # logger.info("Those are the model meta data")
+    # logger.info(model_meta_data)
+    layer_meta_data = model_meta_data[densenet_index_2(layer_index)]
+    # logger.info("Those are the layer meta data")
+    # logger.info(layer_meta_data)
+    prev_layer_meta_data = model_meta_data[densenet_index_2(layer_index)]
+
+    num_filters = []
+    help_index = densenet_index_to_layer(densenet_index_2(layer_index))
+    for i in matching_weights:
+        num_filters.append(np.array(i).shape[0])
+    help_model = densenet121Container(num_filters=num_filters, layer_index=help_index)
+    for param_idx, (key_name, param) in enumerate(help_model.state_dict().items()):
+        if param_idx < densenet_index_2(layer_index-1)+1:
+            continue
+        elif param_idx == densenet_index_2(layer_index-1)+1:
+            batchnorm_layer = np.array(param)
+            L_next = batchnorm_layer.shape[0]
+
+    w_j = weights[densenet_index_2(layer_index)]
+    logger.info("Those are the assignments")
+    logger.info(assignment_j_c)
+
+    layer_info = layer_type[densenet_index_2(layer_index)]
+
+    if layer_index == 2:
+        new_w_j_1 = [[] for j in range(10)]
+        for i in range (9):
+            # logging.info("Layer {}, with shape {}".format(densenet_index(layer_index) +i, w_j[densenet_index(layer_index)+i].shape))
+            if i == 5:
+                continue
+            new_w_j_small = np.zeros((L_next, 1))
+            for j in range(len(assignment_j_c)):
+                new_w_j_small[assignment_j_c[j]] = w_j[1+i][j] 
+            new_w_j_1[i] = new_w_j_small       
+        new_w_j_1 = np.array(new_w_j)
+    else:
+        new_w_j_1 = [[] for j in range(5)]
+        for i in range (4):
+            # logging.info("Layer {}, with shape {}".format(densenet_index(layer_index) +i, w_j[densenet_index(layer_index)+i].shape))
+            new_w_j_small = np.zeros((L_next, 1))
+            
+            if len(assignment_j_c) == np.array(w_j[densenet_index_2(layer_index)-5+i]).shape[0]:
+                for j in range(len(assignment_j_c)):
+                    new_w_j_small[assignment_j_c[j]] = w_j[densenet_index_2(layer_index)-5+i][j] 
+                new_w_j_1[i] = new_w_j_small 
+            else:
+                old_w_j_small = np.zeros(np.array(w_j[densenet_index_2(layer_index)-5+i]).shape[0]+L_next-32)
+                for j in range(np.array(w_j[densenet_index_2(layer_index)-5+i]).shape[0]-32):
+                    old_w_j_small[j] = w_j[densenet_index_2(layer_index)-5+i][j]
+                for j in range(np.array(w_j[densenet_index_2(layer_index)-5+i]).shape[0]-32, np.array(w_j[densenet_index_2(layer_index)-5+i]).shape[0]+ L_next - 32):
+                    old_w_j_small[assignment_j_c[j-np.array(w_j[densenet_index_2(layer_index)-5+i]).shape[0]+32]] = w_j[densenet_index_2(layer_index)-5+i][j]
+                new_w_j_1[i] = old_w_j_small       
+        new_w_j_1 = np.array(new_w_j)
+
+    if "conv" in layer_info:    
+        new_w_j = np.zeros((w_j.shape[0], L_next*(layer_meta_data[-1]**2)))
+
+        # we generate a sequence of block indices
+        block_indices = [np.arange(i*layer_meta_data[-1]**2, (i+1)*layer_meta_data[-1]**2) for i in range(L_next)]
+        ori_block_indices = [np.arange(i*layer_meta_data[-1]**2, (i+1)*layer_meta_data[-1]**2) for i in range(layer_meta_data[1])]
+        for ori_id in range(layer_meta_data[1]):
+            new_w_j[:, block_indices[assignment_j_c[ori_id]]] = w_j[:, ori_block_indices[ori_id]]
+
+        new_w_j_1.append(new_w_j)
+
+    elif "classifier" in layer_info:
+        w_j = w_j.T
+        # we need to estimate the output shape here:
+        if network_name == "simple-cnn":
+            if dataset in ("cifar10", "cinic10"):
+                shape_estimator = SimpleCNNContainerConvBlocks(input_channel=3, num_filters=matching_shapes, kernel_size=5)
+            elif dataset == "mnist":
+                shape_estimator = SimpleCNNContainerConvBlocks(input_channel=1, num_filters=matching_shapes, kernel_size=5)
+        elif network_name == "moderate-cnn":
+            if dataset in ("cifar10", "cinic10"):
+                shape_estimator = ModerateCNNContainerConvBlocks(num_filters=matching_shapes)
+            elif dataset == "mnist":
+                shape_estimator = ModerateCNNContainerConvBlocksMNIST(num_filters=matching_shapes)
+        elif network_name == "lenet":
+            shape_estimator = LeNetContainer(num_filters=matching_shapes, kernel_size=5)
+        elif network_name == 'densenet121':
+            shape_estimator = densenet121Flex(num_filters = matching_shapes)
+
+        if dataset in ("cifar10", "cinic10"):
+            dummy_input = torch.rand(1, 3, 32, 32)
+        elif dataset == "mnist":
+            dummy_input = torch.rand(1, 1, 28, 28)
+        estimated_output = shape_estimator(dummy_input)
+        new_w_j = np.zeros((w_j.shape[0], estimated_output.view(-1).size()[0]))
+        logger.info("estimated_output shape : {}".format(estimated_output.size()))
+        logger.info("meta data of previous layer: {}".format(prev_layer_meta_data))
+        
+        block_indices = [np.arange(i*estimated_output.size()[-1]**2, (i+1)*estimated_output.size()[-1]**2) for i in range(L_next)]
+        #for i, bid in enumerate(block_indices):
+        #    logger.info("{}, {}".format(i, bid))
+        #logger.info("**"*20)
+        ori_block_indices = [np.arange(i*estimated_output.size()[-1]**2, (i+1)*estimated_output.size()[-1]**2) for i in range(prev_layer_meta_data[0])]
+        #for i, obid in enumerate(ori_block_indices):
+        #    logger.info("{}, {}".format(i, obid))
+        #logger.info("assignment c: {}".format(assignment_j_c))
+        for ori_id in range(prev_layer_meta_data[0]):
+            #logger.info("{} ------------ to ------------ {}".format(block_indices[assignment_j_c[ori_id]], ori_block_indices[ori_id]))
+            new_w_j[:, block_indices[assignment_j_c[ori_id]]] = w_j[:, ori_block_indices[ori_id]]
+        new_w_j_1.append(new_w_j.T)
+        #logger.info("mapped block id: {}, ori block id: {}".format(block_indices[assignment_j_c[ori_id]], ori_block_indices[ori_id]))
+    # do a double check logger.infoing here:
+    #logger.info("{}".format(np.array_equal(new_w_j[:, block_indices[4]], w_j[:, ori_block_indices[0]])))
+    return new_w_j_1
 
 def process_softmax_bias(batch_weights, last_layer_const, sigma, sigma0):
     J = len(batch_weights)
@@ -608,8 +794,7 @@ def layer_wise_group_descent(batch_weights, layer_index, batch_frequencies, sigm
             sigma_inv_layer = [np.array([1 / sigma_bias] + (weights_bias[j].shape[1] - 1) * [1 / sigma]) for j in range(J)]
 
         elif layer_index == (n_layers - 1) and n_layers > 2:
-            # handle the last batch normalisation layer
-            # total of 320 layers, so this will be the 319th layer
+            
             this_index = densenet_index(layer_index)
             layer_type = model_layer_type[this_index]
             prev_layer_type = model_layer_type[this_index - 1]
@@ -738,8 +923,10 @@ def layer_wise_group_descent(batch_weights, layer_index, batch_frequencies, sigm
             # originally [global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]], global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]]]
             global_inv_sigmas_out = [global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]]]
             # originally [global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]], global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]]]
-
-            logger.info("Branch A, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+            global_weights_out = [global_weights_out for i in range(J)]
+            global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
+            logger.info("Branch A, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out[0]]))
+            # logger.info("Branch A, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
 
         elif layer_index == (n_layers - 1) and n_layers > 2:
             softmax_bias, softmax_inv_sigma = process_softmax_bias(batch_weights, last_layer_const, sigma, sigma0)
@@ -753,18 +940,46 @@ def layer_wise_group_descent(batch_weights, layer_index, batch_frequencies, sigm
 
             gwc_shape = global_weights_c.shape
             if "conv" in layer_type:
-                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1]]
-                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1]]
+                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]]]
             elif "norm" in layer_type:
-                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1], global_weights_c[:, gwc_shape[1]-1], 
-                [batch_weights[j][densenet_index(layer_index)+2] for j in range(J)], [batch_weights[j][densenet_index(layer_index)+3] for j in range(J)], 
-                [batch_weights[j][densenet_index(layer_index)+4] for j in range(J)]]
-                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1], global_sigmas_c[:, gwc_shape[1]-1], sigma_inv_layer, sigma_inv_layer, sigma_inv_layer]
+                # global_weights_out = [np.array(global_weights_c[:, 0:gwc_shape[1]-1]), np.array(global_weights_c[:, gwc_shape[1]-1]), np.zeros(np.array(global_weights_c[:, gwc_shape[1]-1]).shape),
+                # np.zeros(np.array(global_weights_c[:, gwc_shape[1]-1]).shape), np.array([])] 
+                # help_weights = global_weights_out
+                # for i in range(2,4):
+                #     counter = [[0] for p in range(len(assignment_c[1]))]
+                #     for j in range(J):
+                #         for k in range(len(assignment_c[j])):
+                #             help_weights[i][assignment_c[j][k]] += batch_weights[j][densenet_index(layer_index)+i][k]
+                #             counter[assignment_c[j][k]] += 1
+                #     for p in range(len(counter)):
+                #         help_weights[i][p] = help_weights[i][p] / counter[p]
+                #     global_weights_out[i] = help_weights[i]
+
+                global_weights_out = [[np.array(global_weights_c[:, 0:gwc_shape[1]-1]), np.array(global_weights_c[:, gwc_shape[1]-1]), np.zeros(np.array(global_weights_c[:, gwc_shape[1]-1]).shape),
+                np.zeros(np.array(global_weights_c[:, gwc_shape[1]-1]).shape), np.array([])] for j in range (J)]
+                for i in range(2,4):
+                    for j in range(J):
+                        for k in range(len(assignment_c[j])):
+                            global_weights_out[j][i][assignment_c[j][k]] = batch_weights[j][densenet_index(layer_index)+i][k]
+                # old
+                #  global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1], global_weights_c[:, gwc_shape[1]-1], 
+                # [batch_weights[j][densenet_index(layer_index)+2] for j in range(J)], [batch_weights[j][densenet_index(layer_index)+3] for j in range(J)], 
+                # [batch_weights[j][densenet_index(layer_index)+4] for j in range(J)]]
+
+                # global_inv_sigmas_out = [np.array(global_sigmas_c[:, 0:gwc_shape[1]-1]), np.array(global_sigmas_c[:, gwc_shape[1]-1]), np.array(global_sigmas_c[:, gwc_shape[1]-1]), 
+                #                         np.array(global_sigmas_c[:, gwc_shape[1]-1]), np.array([])]
+                global_inv_sigmas_out = [[np.array(global_sigmas_c[:, 0:gwc_shape[1]-1]), np.array(global_sigmas_c[:, gwc_shape[1]-1]), np.array(global_sigmas_c[:, gwc_shape[1]-1]), 
+                                        np.array(global_sigmas_c[:, gwc_shape[1]-1]), np.array([])] for j in range (J)]
             elif "fc" in layer_type or 'classifier' in layer_type:
                 global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
                 global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
 
-            logger.info("#### Branch B, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+                global_weights_out = [global_weights_out for i in range(J)]
+                global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
+
+            logger.info("#### Branch B, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out[0]]))
+            # logger.info("#### Branch B, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
 
         elif (layer_index > 1 and layer_index < (n_layers - 1)):
            
@@ -774,24 +989,54 @@ def layer_wise_group_descent(batch_weights, layer_index, batch_frequencies, sigm
             gwc_shape = global_weights_c.shape
 
             if "conv" in layer_type:
-                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1]]
-                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1]]
+                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]]]
+
+                global_weights_out = [global_weights_out for i in range(J)]
+                global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
             elif "norm" in layer_type:
-                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1], global_weights_c[:, gwc_shape[1]-1], 
-                [batch_weights[j][densenet_index(layer_index)+2] for j in range(J)], [batch_weights[j][densenet_index(layer_index)+3] for j in range(J)], 
-                [batch_weights[j][densenet_index(layer_index)+4] for j in range(J)]]
-                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1], global_sigmas_c[:, gwc_shape[1]-1], sigma_inv_layer, sigma_inv_layer, sigma_inv_layer]
+                 # global_weights_out = [np.array(global_weights_c[:, 0:gwc_shape[1]-1]), np.array(global_weights_c[:, gwc_shape[1]-1]), np.zeros(np.array(global_weights_c[:, gwc_shape[1]-1]).shape),
+                # np.zeros(np.array(global_weights_c[:, gwc_shape[1]-1]).shape), np.array([])] 
+                # help_weights = global_weights_out
+                # for i in range(2,4):
+                #     counter = [[0] for p in range(len(assignment_c[1]))]
+                #     for j in range(J):
+                #         for k in range(len(assignment_c[j])):
+                #             help_weights[i][assignment_c[j][k]] += batch_weights[j][densenet_index(layer_index)+i][k]
+                #             counter[assignment_c[j][k]] += 1
+                #     for p in range(len(counter)):
+                #         help_weights[i][p] = help_weights[i][p] / counter[p]
+                #     global_weights_out[i] = help_weights[i]
+
+                global_weights_out = [[np.array(global_weights_c[:, 0:gwc_shape[1]-1]), np.array(global_weights_c[:, gwc_shape[1]-1]), np.zeros(np.array(global_weights_c[:, gwc_shape[1]-1]).shape),
+                np.zeros(np.array(global_weights_c[:, gwc_shape[1]-1]).shape), np.array([])] for j in range (J)]
+                for i in range(2,4):
+                    for j in range(J):
+                        for k in range(len(assignment_c[j])):
+                            global_weights_out[j][i][assignment_c[j][k]] = batch_weights[j][densenet_index(layer_index)+i][k]
+                # old
+                #  global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1], global_weights_c[:, gwc_shape[1]-1], 
+                # [batch_weights[j][densenet_index(layer_index)+2] for j in range(J)], [batch_weights[j][densenet_index(layer_index)+3] for j in range(J)], 
+                # [batch_weights[j][densenet_index(layer_index)+4] for j in range(J)]]
+
+                # global_inv_sigmas_out = [np.array(global_sigmas_c[:, 0:gwc_shape[1]-1]), np.array(global_sigmas_c[:, gwc_shape[1]-1]), np.array(global_sigmas_c[:, gwc_shape[1]-1]), 
+                #                         np.array(global_sigmas_c[:, gwc_shape[1]-1]), np.array([])]
+                global_inv_sigmas_out = [[np.array(global_sigmas_c[:, 0:gwc_shape[1]-1]), np.array(global_sigmas_c[:, gwc_shape[1]-1]), np.array(global_sigmas_c[:, gwc_shape[1]-1]), 
+                                        np.array(global_sigmas_c[:, gwc_shape[1]-1]), np.array([])] for j in range (J)]
             elif "fc" in layer_type or 'classifier' in layer_type:
                 global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
                 global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
 
+                global_weights_out = [global_weights_out for i in range(J)]
+                global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
             # if "conv" in layer_type or 'features' in layer_type:
             #     global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1], global_weights_c[:, gwc_shape[1]-1]]
             #     global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1], global_sigmas_c[:, gwc_shape[1]-1]]
             # elif "fc" in layer_type or 'classifier' in layer_type:
             #     global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
             #     global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
-            logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+            logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out[0]]))
+            # logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
             
     else:
         if layer_index <= 1:
@@ -870,8 +1115,11 @@ def layer_wise_group_descent(batch_weights, layer_index, batch_frequencies, sigm
                 global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
             logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
 
-    logger.info("global inv sigma out shape: {}".format([giso.shape for giso in global_inv_sigmas_out]))
-    map_out = [g_w / g_s for g_w, g_s in zip(global_weights_out, global_inv_sigmas_out)]
+    logger.info("global inv sigma out shape: {}".format([giso.shape for giso in global_inv_sigmas_out[0]]))
+    # logger.info("global inv sigma out shape: {}".format([giso.shape for giso in global_inv_sigmas_out]))
+
+    map_out = [[g_w / g_s for g_w, g_s in zip(global_weights_out[i], global_inv_sigmas_out[i])] for i in range(J)]
+    # map_out = [g_w / g_s for g_w, g_s in zip(global_weights_out, global_inv_sigmas_out)]
     return map_out, assignment_c, L_next
 
 def layer_wise_group_descent_all_param(batch_weights, layer_index, batch_frequencies, sigma_layers, 
@@ -932,16 +1180,6 @@ def layer_wise_group_descent_all_param(batch_weights, layer_index, batch_frequen
             mean_prior = np.array(init_channel_kernel_dims[layer_index - 1] * [mu0])
             sigma_inv_layer = [np.array(init_channel_kernel_dims[layer_index - 1] * [1 / sigma]) for j in range(J)] # originally with  + [1 / sigma_bias] at the end
 
-        elif layer_index <= 3:
-            weights_bias = [np.hstack((batch_weights[j][layer_index-1].reshape(-1, 1), 
-                                            batch_weights[j][layer_index].reshape(-1, 1), batch_weights[j][layer_index+1].reshape(-1, 1),
-                                            batch_weights[j][layer_index+2].reshape(-1, 1), batch_weights[j][layer_index+3].reshape(-1, 1))) for j in range(J)]
-            layer_type = model_layer_type[1]
-            prev_layer_type = model_layer_type[0]
-            sigma_inv_prior = np.array([1 / sigma0_bias]*4 + (weights_bias[0].shape[1] - 1) * [1 / sigma0])
-            mean_prior = np.array([mu0_bias]*4 + (weights_bias[0].shape[1] - 1) * [mu0])
-            sigma_inv_layer = [np.array([1 / sigma_bias]*4 + (weights_bias[j].shape[1] - 1) * [1 / sigma]) for j in range(J)]
-
         elif layer_index == (n_layers - 1) and n_layers > 2:
             # handle the last batch normalisation layer
             # total of 320 layers, so this will be the 319th layer
@@ -960,7 +1198,7 @@ def layer_wise_group_descent_all_param(batch_weights, layer_index, batch_frequen
             
             sigma_inv_layer = [np.array([1 / sigma_bias] + (weights_bias[j].shape[1] - 1) * [1 / sigma]) for j in range(J)]
 
-        elif (layer_index > 3 and layer_index < (n_layers - 1)):
+        elif (layer_index > 1 and layer_index < (n_layers - 1)):
             
             this_index = densenet_index(layer_index)
             layer_type = model_layer_type[this_index]
@@ -969,14 +1207,23 @@ def layer_wise_group_descent_all_param(batch_weights, layer_index, batch_frequen
             if 'conv' in layer_type:
                 weights_bias = [batch_weights[j][this_index] for j in range(J)]
 
+                sigma_inv_prior = np.array((weights_bias[0].shape[1]) * [1 / sigma0])
+                mean_prior = np.array((weights_bias[0].shape[1]) * [mu0])
+                sigma_inv_layer = [np.array((weights_bias[j].shape[1]) * [1 / sigma]) for j in range(J)]
             elif 'norm' in layer_type:
+                # weights_bias = [np.hstack((batch_weights[j][this_index].reshape(-1, 1), 
+                #                             batch_weights[j][this_index + 1].reshape(-1, 1), batch_weights[j][this_index + 2].reshape(-1, 1),
+                #                             batch_weights[j][this_index + 3].reshape(-1, 1), batch_weights[j][this_index + 4])) for j in range(J)] 
                 weights_bias = [np.hstack((batch_weights[j][this_index].reshape(-1, 1), 
                                             batch_weights[j][this_index + 1].reshape(-1, 1), batch_weights[j][this_index + 2].reshape(-1, 1),
-                                            batch_weights[j][this_index + 3].reshape(-1, 1), batch_weights[j][this_index + 4].reshape(-1, 1))) for j in range(J)]         
+                                            batch_weights[j][this_index + 3].reshape(-1, 1))) for j in range(J)]            
 
-            sigma_inv_prior = np.array([1 / sigma0_bias]*4 + (weights_bias[0].shape[1] - 1) * [1 / sigma0])
-            mean_prior = np.array([mu0_bias]*4 + (weights_bias[0].shape[1] - 1) * [mu0])
-            sigma_inv_layer = [np.array([1 / sigma_bias]*4 + (weights_bias[j].shape[1] - 1) * [1 / sigma]) for j in range(J)]
+                # sigma_inv_prior = np.array([1 / sigma0_bias]*4 + (weights_bias[0].shape[1] - 4) * [1 / sigma0])
+                # mean_prior = np.array([mu0_bias]*4 + (weights_bias[0].shape[1] - 4) * [mu0])
+                # sigma_inv_layer = [np.array([1 / sigma_bias]*4 + (weights_bias[j].shape[1] - 4) * [1 / sigma]) for j in range(J)]
+                sigma_inv_prior = np.array([1 / sigma0_bias]*3 + (weights_bias[0].shape[1] - 3) * [1 / sigma0])
+                mean_prior = np.array([mu0_bias]*3 + (weights_bias[0].shape[1] - 3) * [mu0])
+                sigma_inv_layer = [np.array([1 / sigma_bias]*3 + (weights_bias[j].shape[1] - 3) * [1 / sigma]) for j in range(J)]
     else:
         if layer_index <= 1:
             weights_bias = [np.hstack((batch_weights[j][0], batch_weights[j][layer_index * 2 - 1].reshape(-1, 1))) for j in range(J)]
@@ -1069,7 +1316,10 @@ def layer_wise_group_descent_all_param(batch_weights, layer_index, batch_frequen
             global_weights_out = [global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]]]
             global_inv_sigmas_out = [global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]]]
 
-            logger.info("Branch A, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+            global_weights_out = [global_weights_out for i in range(J)]
+            global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
+            logger.info("Branch A, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out[0]]))
+            # logger.info("Branch A, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
 
         elif layer_index == (n_layers - 1) and n_layers > 2:
             softmax_bias, softmax_inv_sigma = process_softmax_bias(batch_weights, last_layer_const, sigma, sigma0)
@@ -1082,14 +1332,25 @@ def layer_wise_group_descent_all_param(batch_weights, layer_index, batch_frequen
             first_fc_identifier = (('fc' in layer_type or 'classifier' in layer_type) and ('conv' in prev_layer_type or 'features' in layer_type))
 
             gwc_shape = global_weights_c.shape
-            if "conv" in layer_type or 'features' in layer_type:
-                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1], global_weights_c[:, gwc_shape[1]-1]]
-                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1], global_sigmas_c[:, gwc_shape[1]-1]]
+            if "conv" in layer_type:
+                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]]]
+            elif "norm" in layer_type:
+                # global_weights_out = [np.array(global_weights_c[:, 0:gwc_shape[1]-4]), np.array(global_weights_c[:, gwc_shape[1]-4]),
+                # np.array(global_weights_c[:, gwc_shape[1]-3]), np.array(global_weights_c[:, gwc_shape[1]-2]), np.array(global_weights_c[:, gwc_shape[1]-1])]
+                # global_inv_sigmas_out = [np.array(global_sigmas_c[:, 0:gwc_shape[1]-4]), np.array(global_sigmas_c[:, gwc_shape[1]-4]),
+                # np.array(global_sigmas_c[:, gwc_shape[1]-3]), np.array(global_sigmas_c[:, gwc_shape[1]-2]), np.array(global_sigmas_c[:, gwc_shape[1]-1])]
+                global_weights_out = [np.array(global_weights_c[:, 0:gwc_shape[1]-3]), np.array(global_weights_c[:, gwc_shape[1]-3]),
+                np.array(global_weights_c[:, gwc_shape[1]-2]), np.array(global_weights_c[:, gwc_shape[1]-1]), np.array([])]
+                global_inv_sigmas_out = [np.array(global_sigmas_c[:, 0:gwc_shape[1]-3]), np.array(global_sigmas_c[:, gwc_shape[1]-3]),
+                np.array(global_sigmas_c[:, gwc_shape[1]-2]), np.array(global_sigmas_c[:, gwc_shape[1]-1]), np.array([])]
             elif "fc" in layer_type or 'classifier' in layer_type:
                 global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
                 global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
-
-            logger.info("#### Branch B, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+            global_weights_out = [global_weights_out for i in range(J)]
+            global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
+            logger.info("#### Branch B, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out[0]]))
+            # logger.info("#### Branch B, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
 
         elif (layer_index > 1 and layer_index < (n_layers - 1)):
            
@@ -1099,17 +1360,25 @@ def layer_wise_group_descent_all_param(batch_weights, layer_index, batch_frequen
             gwc_shape = global_weights_c.shape
 
             if "conv" in layer_type:
-                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1]]
-                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1]]
+                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]]]
             elif "norm" in layer_type:
-                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-4], global_weights_c[:, gwc_shape[1]-4],
-                global_weights_c[:, gwc_shape[1]-3], global_weights_c[:, gwc_shape[1]-2], global_weights_c[:, gwc_shape[1]-1]]
-                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-4], global_sigmas_c[:, gwc_shape[1]-4],
-                global_sigmas_c[:, gwc_shape[1]-3], global_sigmas_c[:, gwc_shape[1]-2], global_sigmas_c[:, gwc_shape[1]-1]]
+                # global_weights_out = [np.array(global_weights_c[:, 0:gwc_shape[1]-4]), np.array(global_weights_c[:, gwc_shape[1]-4]),
+                # np.array(global_weights_c[:, gwc_shape[1]-3]), np.array(global_weights_c[:, gwc_shape[1]-2]), np.array(global_weights_c[:, gwc_shape[1]-1])]
+                # global_inv_sigmas_out = [np.array(global_sigmas_c[:, 0:gwc_shape[1]-4]), np.array(global_sigmas_c[:, gwc_shape[1]-4]),
+                # np.array(global_sigmas_c[:, gwc_shape[1]-3]), np.array(global_sigmas_c[:, gwc_shape[1]-2]), np.array(global_sigmas_c[:, gwc_shape[1]-1])]
+                global_weights_out = [np.array(global_weights_c[:, 0:gwc_shape[1]-3]), np.array(global_weights_c[:, gwc_shape[1]-3]),
+                np.array(global_weights_c[:, gwc_shape[1]-2]), np.array(global_weights_c[:, gwc_shape[1]-1]), np.array([])]
+                global_inv_sigmas_out = [np.array(global_sigmas_c[:, 0:gwc_shape[1]-3]), np.array(global_sigmas_c[:, gwc_shape[1]-3]),
+                np.array(global_sigmas_c[:, gwc_shape[1]-2]), np.array(global_sigmas_c[:, gwc_shape[1]-1]), np.array([])]
             elif "fc" in layer_type or 'classifier' in layer_type:
                 global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
                 global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
-            logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+
+            global_weights_out = [global_weights_out for i in range(J)]
+            global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
+            logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out[0]]))
+            # logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
             
     else:
         if layer_index <= 1:
@@ -1188,8 +1457,11 @@ def layer_wise_group_descent_all_param(batch_weights, layer_index, batch_frequen
                 global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
             logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
 
-    logger.info("global inv sigma out shape: {}".format([giso.shape for giso in global_inv_sigmas_out]))
-    map_out = [g_w / g_s for g_w, g_s in zip(global_weights_out, global_inv_sigmas_out)]
+    logger.info("global inv sigma out shape: {}".format([giso.shape for giso in global_inv_sigmas_out[0]]))
+    # logger.info("global inv sigma out shape: {}".format([giso.shape for giso in global_inv_sigmas_out]))
+
+    map_out = [[g_w / g_s for g_w, g_s in zip(global_weights_out[i], global_inv_sigmas_out[i])] for i in range(J)]
+    # map_out = [g_w / g_s for g_w, g_s in zip(global_weights_out, global_inv_sigmas_out)]
     return map_out, assignment_c, L_next
 
 def layer_wise_group_descent_2(batch_weights, layer_index, batch_frequencies, sigma_layers, 
@@ -1243,13 +1515,19 @@ def layer_wise_group_descent_2(batch_weights, layer_index, batch_frequencies, si
     # Densenet121 needs to be handled separately because of its batch normalisation layers
     if args.model == "densenet121":
         if layer_index <= 1:
-            weights_bias = [np.hstack((batch_weights[j][0], batch_weights[j][1].reshape(-1, 1), batch_weights[j][2].reshape(-1, 1)
-            , batch_weights[j][6].reshape(-1, 1), batch_weights[j][7].reshape(-1, 1))) for j in range(J)]
+            # weights_bias = [np.hstack((batch_weights[j][0], batch_weights[j][1].reshape(-1, 1), batch_weights[j][2].reshape(-1, 1)
+            # , batch_weights[j][6].reshape(-1, 1), batch_weights[j][7].reshape(-1, 1))) for j in range(J)]
+
+            # sigma_inv_prior = np.array(
+            #     init_channel_kernel_dims[layer_index - 1] * [1 / sigma0] + 4 * [1 / sigma0_bias])
+            # mean_prior = np.array(init_channel_kernel_dims[layer_index - 1] * [mu0] + 4 * [mu0_bias])
+            # sigma_inv_layer = [np.array(init_channel_kernel_dims[layer_index - 1] * [1 / sigma] + 4 * [1 / sigma_bias]) for j in range(J)]
+            weights_bias = [np.hstack((batch_weights[j][0], batch_weights[j][1].reshape(-1, 1), batch_weights[j][2].reshape(-1, 1))) for j in range(J)]
 
             sigma_inv_prior = np.array(
-                init_channel_kernel_dims[layer_index - 1] * [1 / sigma0] + 4 * [1 / sigma0_bias])
-            mean_prior = np.array(init_channel_kernel_dims[layer_index - 1] * [mu0] + 4 * [mu0_bias])
-            sigma_inv_layer = [np.array(init_channel_kernel_dims[layer_index - 1] * [1 / sigma] + 4 * [1 / sigma_bias]) for j in range(J)]
+                init_channel_kernel_dims[layer_index - 1] * [1 / sigma0] + 2 * [1 / sigma0_bias])
+            mean_prior = np.array(init_channel_kernel_dims[layer_index - 1] * [mu0] + 2 * [mu0_bias])
+            sigma_inv_layer = [np.array(init_channel_kernel_dims[layer_index - 1] * [1 / sigma] + 2 * [1 / sigma_bias]) for j in range(J)]
 
         elif layer_index == (n_layers - 1) and n_layers > 2:
             # handle the last batch normalisation layer
@@ -1262,12 +1540,13 @@ def layer_wise_group_descent_2(batch_weights, layer_index, batch_frequencies, si
             # we switch to ignore the last layer here:
             
             weights_bias = [np.hstack((batch_weights[j][this_index].reshape(-1, 1), 
-                                            batch_weights[j][this_index + 1].reshape(-1, 1))) for j in range(J)]
+                                            batch_weights[j][this_index + 1].reshape(-1, 1),
+                                            batch_weights[j][this_index + 5].reshape(-1, 1))) for j in range(J)]
 
-            sigma_inv_prior = np.array([1 / sigma0_bias] + (weights_bias[0].shape[1] - 1) * [1 / sigma0])
-            mean_prior = np.array([mu0_bias] + (weights_bias[0].shape[1] - 1) * [mu0])
+            sigma_inv_prior = np.array([1 / sigma0_bias]*2 + (weights_bias[0].shape[1] - 2) * [1 / sigma0])
+            mean_prior = np.array([mu0_bias]*2 + (weights_bias[0].shape[1] - 2) * [mu0])
             
-            sigma_inv_layer = [np.array([1 / sigma_bias] + (weights_bias[j].shape[1] - 1) * [1 / sigma]) for j in range(J)]
+            sigma_inv_layer = [np.array([1 / sigma_bias]*2 + (weights_bias[j].shape[1] - 2) * [1 / sigma]) for j in range(J)]
 
         elif (layer_index > 1 and layer_index < (n_layers - 1)):
             
@@ -1275,12 +1554,19 @@ def layer_wise_group_descent_2(batch_weights, layer_index, batch_frequencies, si
             layer_type = model_layer_type[this_index]
             prev_layer_type = model_layer_type[this_index - 1]
             
-            weights_bias = [np.hstack((batch_weights[j][this_index], batch_weights[j][this_index + 1].reshape(-1, 1), 
-            batch_weights[j][this_index + 2].reshape(-1, 1))) for j in range(J)]         
+            # weights_bias = [np.hstack((batch_weights[j][this_index], batch_weights[j][this_index + 1].reshape(-1, 1), 
+            # batch_weights[j][this_index + 2].reshape(-1, 1))) for j in range(J)]         
 
-            sigma_inv_prior = np.array([1 / sigma0_bias]*2 + (weights_bias[0].shape[1] - 1) * [1 / sigma0])
-            mean_prior = np.array([mu0_bias]*2 + (weights_bias[0].shape[1] - 1) * [mu0])
-            sigma_inv_layer = [np.array([1 / sigma_bias]*2 + (weights_bias[j].shape[1] - 1) * [1 / sigma]) for j in range(J)]
+            # sigma_inv_prior = np.array([1 / sigma0_bias]*2 + (weights_bias[0].shape[1] - 2) * [1 / sigma0])
+            # mean_prior = np.array([mu0_bias]*2 + (weights_bias[0].shape[1] - 2) * [mu0])
+            # sigma_inv_layer = [np.array([1 / sigma_bias]*2 + (weights_bias[j].shape[1] - 2) * [1 / sigma]) for j in range(J)]
+
+            weights_bias = [np.hstack((batch_weights[j][this_index].reshape(-1, 1), batch_weights[j][this_index + 1].reshape(-1, 1), 
+            batch_weights[j][this_index + 5].T.reshape(np.array(batch_weights[j][this_index]).shape[0], -1, batch_weights[j][this_index + 5].shape[0]))) for j in range(J)]         
+
+            sigma_inv_prior = np.array([1 / sigma0_bias]*2 + (weights_bias[0].shape[1] - 2) * [1 / sigma0])
+            mean_prior = np.array([mu0_bias]*2 + (weights_bias[0].shape[1] - 2) * [mu0])
+            sigma_inv_layer = [np.array([1 / sigma_bias]*2 + (weights_bias[j].shape[1] - 2) * [1 / sigma]) for j in range(J)]
     else:
         if layer_index <= 1:
             weights_bias = [np.hstack((batch_weights[j][0], batch_weights[j][layer_index * 2 - 1].reshape(-1, 1))) for j in range(J)]
@@ -1370,19 +1656,65 @@ def layer_wise_group_descent_2(batch_weights, layer_index, batch_frequencies, si
     if args.model == "densenet121":
         if layer_index <= 1:
             logger.info(global_weights_c.shape)
-            global_weights_out = [global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]], global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]],
-            global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+1], [batch_weights[j][densenet_index_2(layer_index)+3] for j in range(J)],
-            [batch_weights[j][densenet_index_2(layer_index)+4] for j in range(J)], [batch_weights[j][densenet_index_2(layer_index)+5] for j in range(J)],
-            global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+2], global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+3],
-            [batch_weights[j][densenet_index_2(layer_index)+8] for j in range(J)], [batch_weights[j][densenet_index_2(layer_index)+9] for j in range(J)],
-            [batch_weights[j][densenet_index_2(layer_index)+10] for j in range(J)]]
+            # global_weights_out = [np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]]),
+            # np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]), np.zeros(np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]).shape),
+            # np.zeros(np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]).shape), np.array([]), np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+2]),
+            # np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+3]), np.zeros(np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+3]).shape),
+            # np.zeros(np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+3]).shape),  np.array([])]
             
-            global_inv_sigmas_out = [global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]], global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]],
-            global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+1], sigma_inv_layer, sigma_inv_layer, sigma_inv_layer, 
-            global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+2], global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+3],
-            sigma_inv_layer, sigma_inv_layer, sigma_inv_layer]
+            # help_weights = global_weights_out
+            # for i in [3, 4, 8, 9]:
+            #     counter = [[0] for p in range(len(assignment_c[1]))]
+            #     for j in range(J):
+            #         for k in range(len(assignment_c[j])):
+            #             help_weights[i][assignment_c[j][k]] += batch_weights[j][densenet_index_2(layer_index)+i][k]
+            #             counter[assignment_c[j][k]] += 1
+            #     for p in range(len(counter)):
+            #         help_weights[i][p] = help_weights[i][p] / counter[p]
+            #     global_weights_out[i] = help_weights[i]
+                   
 
-            logger.info("Branch A, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+            # global_weights_out = [[np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]]),
+            # np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]), np.zeros(np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]).shape),
+            # np.zeros(np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]).shape), np.array([]), np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+2]),
+            # np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+3]), np.zeros(np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+3]).shape),
+            # np.zeros(np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+3]).shape),  np.array([])] for j in range (J)]
+            
+            # for j in range(J):
+            #     for k in range(len(assignment_c)):
+            #         global_weights_out[j][3][assignment_c[j][k]] = batch_weights[j][densenet_index_2(layer_index)+3][k]
+            #         global_weights_out[j][4][assignment_c[j][k]] = batch_weights[j][densenet_index_2(layer_index)+4][k]
+            #         global_weights_out[j][8][assignment_c[j][k]] = batch_weights[j][densenet_index_2(layer_index)+8][k]
+            #         global_weights_out[j][9][assignment_c[j][k]] = batch_weights[j][densenet_index_2(layer_index)+9][k]
+            global_weights_out = [[np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]]),
+            np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]), np.zeros(np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]).shape),
+            np.zeros(np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]).shape), np.array([])] for j in range (J)]
+            
+            for j in range(J):
+                for k in range(len(assignment_c)):
+                    global_weights_out[j][3][assignment_c[j][k]] = batch_weights[j][densenet_index_2(layer_index)+3][k]
+                    global_weights_out[j][4][assignment_c[j][k]] = batch_weights[j][densenet_index_2(layer_index)+4][k]
+                    
+            # [batch_weights[j][densenet_index_2(layer_index)+3] for j in range(J)],
+            # [batch_weights[j][densenet_index_2(layer_index)+4] for j in range(J)], [batch_weights[j][densenet_index_2(layer_index)+5] for j in range(J)],
+            # global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+2], global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+3],
+            # [batch_weights[j][densenet_index_2(layer_index)+8] for j in range(J)], [batch_weights[j][densenet_index_2(layer_index)+9] for j in range(J)],
+            # [batch_weights[j][densenet_index_2(layer_index)+10] for j in range(J)]]
+            
+            # global_inv_sigmas_out = [np.array(global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]]),
+            # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]), 
+            # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]), np.array([]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+2]),
+            # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+3]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+3]),
+            # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+3]), np.array([])]
+
+            global_inv_sigmas_out = [np.array(global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]]),
+            np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]), 
+            np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]), np.array([])]
+
+            global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
+
+            # logger.info("Branch A, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+            logger.info("Branch A, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out[0]]))
 
         elif layer_index == (n_layers - 1) and n_layers > 2:
             softmax_bias, softmax_inv_sigma = process_softmax_bias(batch_weights, last_layer_const, sigma, sigma0)
@@ -1396,13 +1728,46 @@ def layer_wise_group_descent_2(batch_weights, layer_index, batch_frequencies, si
 
             gwc_shape = global_weights_c.shape
             if "conv" in layer_type or 'features' in layer_type:
-                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1], global_weights_c[:, gwc_shape[1]-1]]
-                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1], global_sigmas_c[:, gwc_shape[1]-1]]
-            elif "fc" in layer_type or 'classifier' in layer_type:
-                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
-                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
+                # global_weights_out = [np.array(global_weights_c[:, 0:gwc_shape[1]-2]), np.array(global_weights_c[:, gwc_shape[1]-2]),
+                # np.array(global_weights_c[:, gwc_shape[1]-1]), np.zeros(np.array(global_weights_c[:, gwc_shape[1]-1]).shape),
+                # np.zeros(np.array(global_weights_c[:, gwc_shape[1]-1]).shape), np.array([])]
+                # help_weights = global_weights_out
+                # for i in range(3,5):
+                #     counter = [[0] for p in range(len(assignment_c[1]))]
+                #     for j in range(J):
+                #         for k in range(len(assignment_c[j])):
+                #             help_weights[i][assignment_c[j][k]] += batch_weights[j][densenet_index_2(layer_index)+i][k]
+                #     for p in range(len(counter)):
+                #         help_weights[i][p] = help_weights[i][p] / counter [p]
+                #     global_weights_out[i] = help_weights[i]
 
-            logger.info("#### Branch B, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+                global_weights_out = [[np.array(global_weights_c[:, 0]), np.array(global_weights_c[:, 1]),
+                np.zeros(np.array(global_weights_c[:, 1]).shape),
+                np.zeros(np.array(global_weights_c[:, 1]).shape), np.array([]),
+                np.array(global_weights_c[:, 2:gwc_shape[1]])]for j in range (J)]
+
+                for i in range(2,4):
+                    for j in range(J):
+                        for k in range(len(assignment_c[j])):
+                            global_weights_out[j][i][assignment_c[j][k]] = batch_weights[j][densenet_index_2(layer_index)+i][k]
+                
+                # global_inv_sigmas_out = [np.array(global_sigmas_c[:, 0:gwc_shape[1]-2]), np.array(global_sigmas_c[:, gwc_shape[1]-2]), np.array(global_sigmas_c[:, gwc_shape[1]-1]),
+                # np.array(global_sigmas_c[:, gwc_shape[1]-1]), np.array(global_sigmas_c[:, gwc_shape[1]-1]), np.array([])]
+                global_inv_sigmas_out = [np.array(global_sigmas_c[:, 0]), np.array(global_sigmas_c[:, 1]), np.array(global_sigmas_c[:, 1]),
+                np.array(global_sigmas_c[:, 1]), np.array([]), np.array(global_sigmas_c[:, 2:gwc_shape[1]])]
+
+                global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
+            elif "fc" in layer_type or 'classifier' in layer_type:
+                # global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
+                # global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
+                global_weights_out = [global_weights_c[:, 0], global_weights_c[:, 1:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0], global_sigmas_c[:, 1:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
+
+                global_weights_out = [global_weights_out for i in range(J)]
+                global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
+
+            # logger.info("#### Branch B, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+            logger.info("#### Branch B, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out[0]]))
 
         elif (layer_index > 1 and layer_index < (n_layers - 1)):
            
@@ -1412,16 +1777,56 @@ def layer_wise_group_descent_2(batch_weights, layer_index, batch_frequencies, si
             gwc_shape = global_weights_c.shape
 
             if "conv" in layer_type or 'features' in layer_type:
-                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-2], global_weights_c[:, gwc_shape[1]-2],
-                global_weights_c[:, gwc_shape[1]-1], [batch_weights[j][densenet_index_2(layer_index)+3] for j in range(J)],
-                [batch_weights[j][densenet_index_2(layer_index)+4] for j in range(J)], [batch_weights[j][densenet_index_2(layer_index)+5] for j in range(J)]]
+                # global_weights_out = [np.array(global_weights_c[:, 0:gwc_shape[1]-2]), np.array(global_weights_c[:, gwc_shape[1]-2]),
+                # np.array(global_weights_c[:, gwc_shape[1]-1]), np.zeros(np.array(global_weights_c[:, gwc_shape[1]-1]).shape),
+                # np.zeros(np.array(global_weights_c[:, gwc_shape[1]-1]).shape), np.array([])]
+                # help_weights = global_weights_out
+                # for i in range(3,5):
+                #     counter = [[0] for p in range(len(assignment_c[1]))]
+                #     for j in range(J):
+                #         for k in range(len(assignment_c[j])):
+                #             help_weights[i][assignment_c[j][k]] += batch_weights[j][densenet_index_2(layer_index)+i][k]
+                #     for p in range(len(counter)):
+                #         help_weights[i][p] = help_weights[i][p] / counter [p]
+                #     global_weights_out[i] = help_weights[i]
+
+                # global_weights_out = [[np.array(global_weights_c[:, 0:gwc_shape[1]-2]), np.array(global_weights_c[:, gwc_shape[1]-2]),
+                # np.array(global_weights_c[:, gwc_shape[1]-1]), np.zeros(np.array(global_weights_c[:, gwc_shape[1]-1]).shape),
+                # np.zeros(np.array(global_weights_c[:, gwc_shape[1]-1]).shape), np.array([])]for j in range (J)]
+
+                # for i in range(3,5):
+                #     for j in range(J):
+                #         for k in range(len(assignment_c[j])):
+                #             global_weights_out[j][i][assignment_c[j][k]] = batch_weights[j][densenet_index_2(layer_index)+i][k]
                 
-                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-2], global_sigmas_c[:, gwc_shape[1]-2], global_sigmas_c[:, gwc_shape[1]-1],
-                sigma_inv_layer, sigma_inv_layer, sigma_inv_layer]
+                # global_inv_sigmas_out = [np.array(global_sigmas_c[:, 0:gwc_shape[1]-2]), np.array(global_sigmas_c[:, gwc_shape[1]-2]), np.array(global_sigmas_c[:, gwc_shape[1]-1]),
+                # np.array(global_sigmas_c[:, gwc_shape[1]-1]), np.array(global_sigmas_c[:, gwc_shape[1]-1]), np.array([])]
+                global_weights_out = [[np.array(global_weights_c[:, 0]), np.array(global_weights_c[:, 1]),
+                np.zeros(np.array(global_weights_c[:, 1]).shape),
+                np.zeros(np.array(global_weights_c[:, 1]).shape), np.array([]),
+                np.array(global_weights_c[:, 2:gwc_shape[1]])]for j in range (J)]
+
+                for i in range(2,4):
+                    for j in range(J):
+                        for k in range(len(assignment_c[j])):
+                            global_weights_out[j][i][assignment_c[j][k]] = batch_weights[j][densenet_index_2(layer_index)+i][k]
+                
+                global_inv_sigmas_out = [np.array(global_sigmas_c[:, 0]), np.array(global_sigmas_c[:, 1]), np.array(global_sigmas_c[:, 1]),
+                np.array(global_sigmas_c[:, 1]), np.array([]), np.array(global_sigmas_c[:, 2:gwc_shape[1]])]
+
+
+                global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
             elif "fc" in layer_type or 'classifier' in layer_type:
-                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
-                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
-            logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+                # global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
+                # global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
+                global_weights_out = [global_weights_c[:, 0], global_weights_c[:, 1:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0], global_sigmas_c[:, 1:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
+
+                global_weights_out = [global_weights_out for i in range(J)]
+                global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
+
+            # logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+            logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out[0]]))
             
     else:
         if layer_index <= 1:
@@ -1500,8 +1905,11 @@ def layer_wise_group_descent_2(batch_weights, layer_index, batch_frequencies, si
                 global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
             logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
 
-    logger.info("global inv sigma out shape: {}".format([giso.shape for giso in global_inv_sigmas_out]))
-    map_out = [g_w / g_s for g_w, g_s in zip(global_weights_out, global_inv_sigmas_out)]
+    logger.info("global inv sigma out shape: {}".format([giso.shape for giso in global_inv_sigmas_out[0]]))
+    # logger.info("global inv sigma out shape: {}".format([giso.shape for giso in global_inv_sigmas_out]))
+
+    map_out = [[g_w / g_s for g_w, g_s in zip(global_weights_out[i], global_inv_sigmas_out[i])] for i in range(J)]
+    # map_out = [g_w / g_s for g_w, g_s in zip(global_weights_out, global_inv_sigmas_out)]
     return map_out, assignment_c, L_next
 
 def layer_wise_group_descent_2_all_param(batch_weights, layer_index, batch_frequencies, sigma_layers, 
@@ -1555,15 +1963,23 @@ def layer_wise_group_descent_2_all_param(batch_weights, layer_index, batch_frequ
     # Densenet121 needs to be handled separately because of its batch normalisation layers
     if args.model == "densenet121":
         if layer_index <= 1:
+            # weights_bias = [np.hstack((batch_weights[j][0], batch_weights[j][1].reshape(-1, 1), batch_weights[j][2].reshape(-1, 1),
+            # batch_weights[j][3].reshape(-1, 1), batch_weights[j][4].reshape(-1, 1),batch_weights[j][5].reshape(-1, 1)
+            # , batch_weights[j][6].reshape(-1, 1), batch_weights[j][7].reshape(-1, 1), batch_weights[j][8].reshape(-1, 1), 
+            # batch_weights[j][9].reshape(-1, 1), batch_weights[j][10].reshape(-1, 1))) for j in range(J)]
+
+            # sigma_inv_prior = np.array(
+            #     init_channel_kernel_dims[layer_index - 1] * [1 / sigma0] + 10 * [1 / sigma0_bias])
+            # mean_prior = np.array(init_channel_kernel_dims[layer_index - 1] * [mu0] + 10 * [mu0_bias])
+            # sigma_inv_layer = [np.array(init_channel_kernel_dims[layer_index - 1] * [1 / sigma] + 10 * [1 / sigma_bias]) for j in range(J)]
+
             weights_bias = [np.hstack((batch_weights[j][0], batch_weights[j][1].reshape(-1, 1), batch_weights[j][2].reshape(-1, 1),
-            batch_weights[j][3].reshape(-1, 1), batch_weights[j][4].reshape(-1, 1),batch_weights[j][5].reshape(-1, 1)
-            , batch_weights[j][6].reshape(-1, 1), batch_weights[j][7].reshape(-1, 1), batch_weights[j][8].reshape(-1, 1), 
-            batch_weights[j][9].reshape(-1, 1), batch_weights[j][10].reshape(-1, 1))) for j in range(J)]
+            batch_weights[j][3].reshape(-1, 1), batch_weights[j][4].reshape(-1, 1))) for j in range(J)]
 
             sigma_inv_prior = np.array(
-                init_channel_kernel_dims[layer_index - 1] * [1 / sigma0] + 10 * [1 / sigma0_bias])
-            mean_prior = np.array(init_channel_kernel_dims[layer_index - 1] * [mu0] + 10 * [mu0_bias])
-            sigma_inv_layer = [np.array(init_channel_kernel_dims[layer_index - 1] * [1 / sigma] + 10 * [1 / sigma_bias]) for j in range(J)]
+                init_channel_kernel_dims[layer_index - 1] * [1 / sigma0] + 4 * [1 / sigma0_bias])
+            mean_prior = np.array(init_channel_kernel_dims[layer_index - 1] * [mu0] + 4 * [mu0_bias])
+            sigma_inv_layer = [np.array(init_channel_kernel_dims[layer_index - 1] * [1 / sigma] + 4 * [1 / sigma_bias]) for j in range(J)]
 
         elif layer_index == (n_layers - 1) and n_layers > 2:
             # handle the last batch normalisation layer
@@ -1576,12 +1992,13 @@ def layer_wise_group_descent_2_all_param(batch_weights, layer_index, batch_frequ
             # we switch to ignore the last layer here:
             
             weights_bias = [np.hstack((batch_weights[j][this_index].reshape(-1, 1), 
-                                            batch_weights[j][this_index + 1].reshape(-1, 1))) for j in range(J)]
+                                            batch_weights[j][this_index + 1].reshape(-1, 1),
+                                            batch_weights[j][this_index + 5].reshape(-1, 1))) for j in range(J)]
 
-            sigma_inv_prior = np.array([1 / sigma0_bias] + (weights_bias[0].shape[1] - 1) * [1 / sigma0])
-            mean_prior = np.array([mu0_bias] + (weights_bias[0].shape[1] - 1) * [mu0])
+            sigma_inv_prior = np.array([1 / sigma0_bias]*2 + (weights_bias[0].shape[1] - 2) * [1 / sigma0])
+            mean_prior = np.array([mu0_bias]*2 + (weights_bias[0].shape[1] - 2) * [mu0])
             
-            sigma_inv_layer = [np.array([1 / sigma_bias] + (weights_bias[j].shape[1] - 1) * [1 / sigma]) for j in range(J)]
+            sigma_inv_layer = [np.array([1 / sigma_bias]*2 + (weights_bias[j].shape[1] - 2) * [1 / sigma]) for j in range(J)]
 
         elif (layer_index > 1 and layer_index < (n_layers - 1)):
             
@@ -1589,13 +2006,13 @@ def layer_wise_group_descent_2_all_param(batch_weights, layer_index, batch_frequ
             layer_type = model_layer_type[this_index]
             prev_layer_type = model_layer_type[this_index - 1]
             
-            weights_bias = [np.hstack((batch_weights[j][this_index], batch_weights[j][this_index + 1].reshape(-1, 1), 
-            batch_weights[j][this_index + 2].reshape(-1, 1), batch_weights[j][this_index + 3].reshape(-1, 1), batch_weights[j][this_index + 4].reshape(-1, 1),
-            batch_weights[j][this_index + 5].reshape(-1, 1))) for j in range(J)]         
+            weights_bias = [np.hstack((batch_weights[j][this_index].reshape(-1, 1), batch_weights[j][this_index + 1].reshape(-1, 1), 
+            batch_weights[j][this_index + 2].reshape(-1, 1), batch_weights[j][this_index + 3].reshape(-1, 1), 
+            batch_weights[j][this_index + 5])) for j in range(J)]         
 
-            sigma_inv_prior = np.array([1 / sigma0_bias]*5 + (weights_bias[0].shape[1] - 1) * [1 / sigma0])
-            mean_prior = np.array([mu0_bias]*5 + (weights_bias[0].shape[1] - 1) * [mu0])
-            sigma_inv_layer = [np.array([1 / sigma_bias]*5 + (weights_bias[j].shape[1] - 1) * [1 / sigma]) for j in range(J)]
+            sigma_inv_prior = np.array([1 / sigma0_bias]*4 + (weights_bias[0].shape[1] - 4) * [1 / sigma0])
+            mean_prior = np.array([mu0_bias]*4 + (weights_bias[0].shape[1] - 4) * [mu0])
+            sigma_inv_layer = [np.array([1 / sigma_bias]*4 + (weights_bias[j].shape[1] - 4) * [1 / sigma]) for j in range(J)]
     else:
         if layer_index <= 1:
             weights_bias = [np.hstack((batch_weights[j][0], batch_weights[j][layer_index * 2 - 1].reshape(-1, 1))) for j in range(J)]
@@ -1685,20 +2102,29 @@ def layer_wise_group_descent_2_all_param(batch_weights, layer_index, batch_frequ
     if args.model == "densenet121":
         if layer_index <= 1:
             logger.info(global_weights_c.shape)
-            global_weights_out = [global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]], global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]],
-            global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+1], global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+2],
-            global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+3], global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+4],
-            global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+5], global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+6],
-            global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+7], global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+8],
-            global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+9], global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+10]]
-            global_inv_sigmas_out = [global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]], global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]],
-            global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+1], global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+2],
-            global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+3], global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+4],
-            global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+5], global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+6],
-            global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+7], global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+8],
-            global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+9], global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+10]]
+            # global_weights_out = [np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]]),
+            # np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]), np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+2]),
+            # np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+3]), np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+4]),
+            # np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+5]), np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+6]),
+            # np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+7]), np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+8]),
+            # np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+9]), np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+10])]
+            # global_inv_sigmas_out = [np.array(global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]]),
+            # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+2]),
+            # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+3]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+4]),
+            # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+5]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+6]),
+            # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+7]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+8]),
+            # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+9]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+10])]
+            global_weights_out = [np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]]),
+            np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]), np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+2]),
+            np.array(global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]+3]), np.array([])]
+            global_inv_sigmas_out = [np.array(global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]]),
+            np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+1]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+2]),
+            np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]+3]), np.array([])]
 
-            logger.info("Branch A, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+            global_weights_out = [global_weights_out for i in range(J)]
+            global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
+            logger.info("Branch A, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out[0]]))
+            # logger.info("Branch A, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
 
         elif layer_index == (n_layers - 1) and n_layers > 2:
             softmax_bias, softmax_inv_sigma = process_softmax_bias(batch_weights, last_layer_const, sigma, sigma0)
@@ -1712,13 +2138,28 @@ def layer_wise_group_descent_2_all_param(batch_weights, layer_index, batch_frequ
 
             gwc_shape = global_weights_c.shape
             if "conv" in layer_type or 'features' in layer_type:
-                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1], global_weights_c[:, gwc_shape[1]-1]]
-                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1], global_sigmas_c[:, gwc_shape[1]-1]]
-            elif "fc" in layer_type or 'classifier' in layer_type:
-                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
-                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
+                # global_weights_out = [np.array(global_weights_c[:, 0:gwc_shape[1]-5]), np.array(global_weights_c[:, gwc_shape[1]-5]),
+                # np.array(global_weights_c[:, gwc_shape[1]-4]), np.array(global_weights_c[:, gwc_shape[1]-3]), np.array(global_weights_c[:, gwc_shape[1]-2])
+                # , np.array(global_weights_c[:, gwc_shape[1]-1])]
 
-            logger.info("#### Branch B, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+                # global_inv_sigmas_out = [np.array(global_sigmas_c[:, 0:gwc_shape[1]-5]), np.array(global_sigmas_c[:, gwc_shape[1]-5]),
+                # np.array(global_sigmas_c[:, gwc_shape[1]-4]), np.array(global_sigmas_c[:, gwc_shape[1]-3]), np.array(global_sigmas_c[:, gwc_shape[1]-2]),
+                # np.array(global_sigmas_c[:, gwc_shape[1]-1])]
+                global_weights_out = [np.array(global_weights_c[:, 0]), np.array(global_weights_c[:, 1]),
+                np.array(global_weights_c[:, 2]), np.array(global_weights_c[:, 3]), np.array([])
+                , np.array(global_weights_c[:, 4:gwc_shape[1]])]
+
+                global_inv_sigmas_out = [np.array(global_sigmas_c[:, 0]), np.array(global_sigmas_c[:, 1]),
+                np.array(global_sigmas_c[:, 2]), np.array(global_sigmas_c[:, 3]), np.array([]),
+                np.array(global_sigmas_c[:, 4:gwc_shape[1]])]
+            elif "fc" in layer_type or 'classifier' in layer_type:
+                global_weights_out = [global_weights_c[:, 0], global_weights_c[:, 1:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0], global_sigmas_c[:, 1:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
+
+            global_weights_out = [global_weights_out for i in range(J)]
+            global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
+            logger.info("#### Branch B, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out[0]]))
+            # logger.info("#### Branch B, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
 
         elif (layer_index > 1 and layer_index < (n_layers - 1)):
            
@@ -1728,18 +2169,873 @@ def layer_wise_group_descent_2_all_param(batch_weights, layer_index, batch_frequ
             gwc_shape = global_weights_c.shape
 
             if "conv" in layer_type or 'features' in layer_type:
-                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-5], global_weights_c[:, gwc_shape[1]-5],
-                global_weights_c[:, gwc_shape[1]-4], global_weights_c[:, gwc_shape[1]-3], global_weights_c[:, gwc_shape[1]-2]
-                , global_weights_c[:, gwc_shape[1]-1]]
+                global_weights_out = [np.array(global_weights_c[:, 0]), np.array(global_weights_c[:, 1]),
+                np.array(global_weights_c[:, 2]), np.array(global_weights_c[:, 3]), np.array([])
+                , np.array(global_weights_c[:, 4:gwc_shape[1]])]
 
-                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-5], global_sigmas_c[:, gwc_shape[1]-5],
-                global_sigmas_c[:, gwc_shape[1]-4], global_sigmas_c[:, gwc_shape[1]-3], global_sigmas_c[:, gwc_shape[1]-2],
-                global_sigmas_c[:, gwc_shape[1]-1]]
+                global_inv_sigmas_out = [np.array(global_sigmas_c[:, 0]), np.array(global_sigmas_c[:, 1]),
+                np.array(global_sigmas_c[:, 2]), np.array(global_sigmas_c[:, 3]), np.array([]),
+                np.array(global_sigmas_c[:, 4:gwc_shape[1]])]
+            elif "fc" in layer_type or 'classifier' in layer_type:
+                global_weights_out = [global_weights_c[:, 0], global_weights_c[:, 1:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0], global_sigmas_c[:, 1:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
+
+            global_weights_out = [global_weights_out for i in range(J)]
+            global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
+            logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out[0]]))
+            # logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+            
+    else:
+        if layer_index <= 1:
+            if n_layers == 2:
+                softmax_bias, softmax_inv_sigma = process_softmax_bias(batch_weights, last_layer_const, sigma, sigma0)
+                global_weights_out = [softmax_bias]
+                global_inv_sigmas_out = [softmax_inv_sigma]
+            
+            global_weights_out = [global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]], global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]]]
+            global_inv_sigmas_out = [global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]], global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]]]
+
+            logger.info("Branch A, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+
+        elif layer_index == (n_layers - 1) and n_layers > 2:
+            softmax_bias, softmax_inv_sigma = process_softmax_bias(batch_weights, last_layer_const, sigma, sigma0)
+
+            layer_type = model_layer_type[2 * layer_index - 2]
+            prev_layer_type = model_layer_type[2 * layer_index - 2 - 2]
+            #first_fc_identifier = ('fc' in layer_type and 'conv' in prev_layer_type)
+            first_fc_identifier = (('fc' in layer_type or 'classifier' in layer_type) and ('conv' in prev_layer_type or 'features' in layer_type))
+
+            # if first_fc_identifier:
+            #     global_weights_out = [global_weights_c[:, 0:-softmax_bias.shape[0]-1].T, 
+            #                             global_weights_c[:, -softmax_bias.shape[0]-1], 
+            #                             global_weights_c[:, -softmax_bias.shape[0]:], 
+            #                             softmax_bias]
+
+            #     global_inv_sigmas_out = [global_sigmas_c[:, 0:-softmax_bias.shape[0]-1].T, 
+            #                                 global_sigmas_c[:, -softmax_bias.shape[0]-1], 
+            #                                 global_sigmas_c[:, -softmax_bias.shape[0]:], 
+            #                                 softmax_inv_sigma]
+            # else:
+            #     global_weights_out = [global_weights_c[:, 0:matching_shapes[layer_index - 1 - 1]].T, 
+            #                             global_weights_c[:, matching_shapes[layer_index - 1 - 1]], 
+            #                             global_weights_c[:, matching_shapes[layer_index - 1 - 1]+1:], 
+            #                             softmax_bias]
+
+            #     global_inv_sigmas_out = [global_sigmas_c[:, 0:matching_shapes[layer_index - 1 - 1]].T, 
+            #                                 global_sigmas_c[:, matching_shapes[layer_index - 1 - 1]], 
+            #                                 global_sigmas_c[:, matching_shapes[layer_index - 1 - 1]+1:], 
+            #                                 softmax_inv_sigma]
+
+            # remove fitting the last layer
+            # if first_fc_identifier:
+            #     global_weights_out = [global_weights_c[:, 0:-softmax_bias.shape[0]-1].T, 
+            #                             global_weights_c[:, -softmax_bias.shape[0]-1]]
+
+            #     global_inv_sigmas_out = [global_sigmas_c[:, 0:-softmax_bias.shape[0]-1].T, 
+            #                                 global_sigmas_c[:, -softmax_bias.shape[0]-1]]
+            # else:
+            #     global_weights_out = [global_weights_c[:, 0:matching_shapes[layer_index - 1 - 1]].T, 
+            #                             global_weights_c[:, matching_shapes[layer_index - 1 - 1]]]
+
+            #     global_inv_sigmas_out = [global_sigmas_c[:, 0:matching_shapes[layer_index - 1 - 1]].T, 
+            #                                 global_sigmas_c[:, matching_shapes[layer_index - 1 - 1]]]
+            layer_type = model_layer_type[2 * layer_index - 2]
+            gwc_shape = global_weights_c.shape
+            if "conv" in layer_type or 'features' in layer_type:
+                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1], global_weights_c[:, gwc_shape[1]-1]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1], global_sigmas_c[:, gwc_shape[1]-1]]
+            elif "fc" in layer_type or 'classifier' in layer_type:
+                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
+
+            logger.info("#### Branch B, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+
+        elif (layer_index > 1 and layer_index < (n_layers - 1)):
+            layer_type = model_layer_type[2 * layer_index - 2]
+            gwc_shape = global_weights_c.shape
+
+            if "conv" in layer_type or 'features' in layer_type:
+                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1], global_weights_c[:, gwc_shape[1]-1]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1], global_sigmas_c[:, gwc_shape[1]-1]]
             elif "fc" in layer_type or 'classifier' in layer_type:
                 global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
                 global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
             logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+
+    logger.info("global inv sigma out shape: {}".format([giso.shape for giso in global_inv_sigmas_out[0]]))
+    # logger.info("global inv sigma out shape: {}".format([giso.shape for giso in global_inv_sigmas_out]))
+
+    map_out = [[g_w / g_s for g_w, g_s in zip(global_weights_out[i], global_inv_sigmas_out[i])] for i in range(J)]
+    # map_out = [g_w / g_s for g_w, g_s in zip(global_weights_out, global_inv_sigmas_out)]
+    return map_out, assignment_c, L_next
+
+def layer_wise_group_descent_3(batch_weights, layer_index, batch_frequencies, sigma_layers, 
+                                sigma0_layers, gamma_layers, it, 
+                                model_meta_data, 
+                                model_layer_type,
+                                n_layers,
+                                matching_shapes,
+                                args):
+    """
+    We implement a layer-wise matching here:
+    """
+    if type(sigma_layers) is not list:
+        sigma_layers = (n_layers - 1) * [sigma_layers]
+    if type(sigma0_layers) is not list:
+        sigma0_layers = (n_layers - 1) * [sigma0_layers]
+    if type(gamma_layers) is not list:
+        gamma_layers = (n_layers - 1) * [gamma_layers]
+
+    last_layer_const = []
+    total_freq = sum(batch_frequencies)
+    for f in batch_frequencies:
+        last_layer_const.append(f / total_freq)
+
+    # J: number of workers
+    J = len(batch_weights)
+    # init_num_kernel: the number of conv filters in the first conv layer 
+    init_num_kernel = batch_weights[0][0].shape[0]
+
+    # for saving (#channel * k * k)
+    # no adapatedtion for batch_normalisation weights necessary since only first entry relevant
+    init_channel_kernel_dims = []
+    for bw in batch_weights[0]:
+        if len(bw.shape) > 1:
+            init_channel_kernel_dims.append(bw.shape[1])
+    logger.info("init_channel_kernel_dims: {}".format(init_channel_kernel_dims))
+    
+    sigma_bias_layers = sigma_layers
+    sigma0_bias_layers = sigma0_layers
+    mu0 = 0.
+    mu0_bias = 0.1
+    assignment_c = [None for j in range(J)]
+    L_next = None
+
+    sigma = sigma_layers[layer_index - 1]
+    sigma_bias = sigma_bias_layers[layer_index - 1]
+    gamma = gamma_layers[layer_index - 1]
+    sigma0 = sigma0_layers[layer_index - 1]
+    sigma0_bias = sigma0_bias_layers[layer_index - 1]
+
+    # Densenet121 needs to be handled separately because of its batch normalisation layers
+    if args.model == "densenet121":
+        if layer_index <= 1:
+            weights_bias = [batch_weights[j][0] for j in range(J)]
+
+            sigma_inv_prior = np.array(
+                init_channel_kernel_dims[layer_index - 1] * [1 / sigma0])
+            mean_prior = np.array(init_channel_kernel_dims[layer_index - 1] * [mu0])
+            sigma_inv_layer = [np.array(init_channel_kernel_dims[layer_index - 1] * [1 / sigma]) for j in range(J)]
+
+        elif layer_index == (n_layers - 1) and n_layers > 2:
+            # handle the last batch normalisation layer
+            # total of 320 layers, so this will be the 319th layer
+            this_index = densenet_index_3(layer_index)
+            layer_type = model_layer_type[this_index]
+            prev_layer_type = model_layer_type[this_index - 1]
+            first_fc_identifier = (('fc' in layer_type or 'classifier' in layer_type) and ('conv' in prev_layer_type or 'features' in layer_type))
+
+            # we switch to ignore the last layer here:
             
+            if "conv" in layer_type:
+                weights_bias = [batch_weights[j][this_index] for j in range(J)]
+
+                sigma_inv_prior = np.array((weights_bias[0].shape[1]) * [1 / sigma0])
+                mean_prior = np.array((weights_bias[0].shape[1]) * [mu0])
+                sigma_inv_layer = [np.array((weights_bias[j].shape[1]) * [1 / sigma]) for j in range(J)]
+            elif "fc" in layer_type or 'classifier' in layer_type:   
+                weights_bias = [np.hstack((batch_weights[j][this_index].reshape(-1, 1), 
+                                                batch_weights[j][this_index + 1].reshape(-1, 1))) for j in range(J)]
+
+                sigma_inv_prior = np.array([1 / sigma0_bias] + (weights_bias[0].shape[1] - 1) * [1 / sigma0])
+                mean_prior = np.array([mu0_bias] + (weights_bias[0].shape[1] - 1) * [mu0])
+                
+                sigma_inv_layer = [np.array([1 / sigma_bias] + (weights_bias[j].shape[1] - 1) * [1 / sigma]) for j in range(J)]
+
+        elif (layer_index > 1 and layer_index < (n_layers - 1)):
+            
+            this_index = densenet_index_3(layer_index)
+            layer_type = model_layer_type[this_index]
+            prev_layer_type = model_layer_type[densenet_index_3(layer_index-1)]
+            
+            weights_bias = [batch_weights[j][this_index] for j in range(J)]         
+
+            sigma_inv_prior = np.array((weights_bias[0].shape[1]) * [1 / sigma0])
+            mean_prior = np.array((weights_bias[0].shape[1]) * [mu0])
+            sigma_inv_layer = [np.array((weights_bias[j].shape[1]) * [1 / sigma]) for j in range(J)]
+    else:
+        if layer_index <= 1:
+            weights_bias = [np.hstack((batch_weights[j][0], batch_weights[j][layer_index * 2 - 1].reshape(-1, 1))) for j in range(J)]
+
+            sigma_inv_prior = np.array(
+                init_channel_kernel_dims[layer_index - 1] * [1 / sigma0] + [1 / sigma0_bias])
+            mean_prior = np.array(init_channel_kernel_dims[layer_index - 1] * [mu0] + [mu0_bias])
+
+            # handling 2-layer neural network
+            # hier wurde ine Ändrung vorgenommen, damit kein Fehler gemeldet wird. Dieser Codeteil sollte
+            # allerdings nicht aufgerufen werden
+            if n_layers == 2:
+                sigma_inv_layer = [
+                    np.array((weights_bias[j].shape[1] - 1) * [1 / sigma] + [1 / sigma_bias] + [y / sigma for y in last_layer_const[j]]) for j in range(J)]
+            else:
+                sigma_inv_layer = [np.array(init_channel_kernel_dims[layer_index - 1] * [1 / sigma] + [1 / sigma_bias]) for j in range(J)]
+
+        elif layer_index == (n_layers - 1) and n_layers > 2:
+            # our assumption is that this branch will consistently handle the last fc layers
+            layer_type = model_layer_type[2 * layer_index - 2]
+            prev_layer_type = model_layer_type[2 * layer_index - 2 - 2]
+            first_fc_identifier = (('fc' in layer_type or 'classifier' in layer_type) and ('conv' in prev_layer_type or 'features' in layer_type))
+
+            # if first_fc_identifier:
+            #     weights_bias = [np.hstack((batch_weights[j][2 * layer_index - 2].T, 
+            #                                 batch_weights[j][2 * layer_index - 1].reshape(-1, 1),
+            #                                 batch_weights[j][2 * layer_index])) for j in range(J)]
+            # else:
+            #     weights_bias = [np.hstack((batch_weights[j][2 * layer_index - 2].T, 
+            #                                 batch_weights[j][2 * layer_index - 1].reshape(-1, 1),
+            #                                 batch_weights[j][2 * layer_index])) for j in range(J)]
+
+            # we switch to ignore the last layer here:
+            if first_fc_identifier:
+                weights_bias = [np.hstack((batch_weights[j][2 * layer_index - 2].T, 
+                                            batch_weights[j][2 * layer_index - 1].reshape(-1, 1))) for j in range(J)]
+            else:
+                weights_bias = [np.hstack((batch_weights[j][2 * layer_index - 2].T, 
+                                            batch_weights[j][2 * layer_index - 1].reshape(-1, 1))) for j in range(J)]
+
+
+            sigma_inv_prior = np.array([1 / sigma0_bias] + (weights_bias[0].shape[1] - 1) * [1 / sigma0])
+            mean_prior = np.array([mu0_bias] + (weights_bias[0].shape[1] - 1) * [mu0])
+            
+            # hwang: this needs to be handled carefully
+            #sigma_inv_layer = [np.array([1 / sigma_bias] + [y / sigma for y in last_layer_const[j]]) for j in range(J)]
+            #sigma_inv_layer = [np.array([1 / sigma_bias] + (weights_bias[j].shape[1] - 1) * [1 / sigma]) for j in range(J)]
+
+            #sigma_inv_layer = [np.array((matching_shapes[layer_index - 2]) * [1 / sigma] + [1 / sigma_bias] + [y / sigma for y in last_layer_const[j]]) for j in range(J)]
+            
+            #sigma_inv_layer = [np.array((matching_shapes[layer_index - 2]) * [1 / sigma] + [1 / sigma_bias]) for j in range(J)]
+            sigma_inv_layer = [np.array([1 / sigma_bias] + (weights_bias[j].shape[1] - 1) * [1 / sigma]) for j in range(J)]
+
+        elif (layer_index > 1 and layer_index < (n_layers - 1)):
+            layer_type = model_layer_type[2 * layer_index - 2]
+            prev_layer_type = model_layer_type[2 * layer_index - 2 - 2]
+
+            if 'conv' in layer_type or 'features' in layer_type:
+                weights_bias = [np.hstack((batch_weights[j][2 * layer_index - 2], batch_weights[j][2 * layer_index - 1].reshape(-1, 1))) for j in range(J)]
+
+            elif 'fc' in layer_type or 'classifier' in layer_type:
+                # we need to determine if the type of the current layer is the same as it's previous layer
+                # i.e. we need to identify if the fully connected layer we're working on is the first fc layer after the conv block
+                #first_fc_identifier = ('fc' in layer_type and 'conv' in prev_layer_type)
+                first_fc_identifier = (('fc' in layer_type or 'classifier' in layer_type) and ('conv' in prev_layer_type or 'features' in layer_type))
+                #logger.info("first_fc_identifier: {}".format(first_fc_identifier))
+                if first_fc_identifier:
+                    weights_bias = [np.hstack((batch_weights[j][2 * layer_index - 2].T, batch_weights[j][2 * layer_index - 1].reshape(-1, 1))) for j in range(J)]
+                else:
+                    weights_bias = [np.hstack((batch_weights[j][2 * layer_index - 2].T, batch_weights[j][2 * layer_index - 1].reshape(-1, 1))) for j in range(J)]          
+
+            sigma_inv_prior = np.array([1 / sigma0_bias] + (weights_bias[0].shape[1] - 1) * [1 / sigma0])
+            mean_prior = np.array([mu0_bias] + (weights_bias[0].shape[1] - 1) * [mu0])
+            sigma_inv_layer = [np.array([1 / sigma_bias] + (weights_bias[j].shape[1] - 1) * [1 / sigma]) for j in range(J)]
+
+    logger.info("Layer index: {}, init_num_kernel: {}".format(layer_index, init_num_kernel))
+    logger.info("weights bias: {}".format(weights_bias[0].shape))
+    logger.info("sigma_inv_prior shape: {}".format(sigma_inv_prior.shape))
+    logger.info("mean_prior shape: {}".format(mean_prior.shape))
+    logger.info("sigma_inv_layer shape: {}".format(sigma_inv_layer[0].shape))
+
+    assignment_c, global_weights_c, global_sigmas_c = match_layer(weights_bias, sigma_inv_layer, mean_prior,
+                                                                  sigma_inv_prior, gamma, it)
+
+    L_next = global_weights_c.shape[0]
+
+    if args.model == "densenet121":
+        if layer_index <= 1:
+            this_index = densenet_index_3(layer_index)
+            logger.info(global_weights_c.shape)
+            # average batchnorm parameters
+            # global_weights_out = [np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(batch_weights[0][this_index+1]),
+            # np.array(batch_weights[0][this_index+2]), np.array(batch_weights[0][this_index+3]), np.array(batch_weights[0][this_index+4]),
+            # np.array([]), np.array(batch_weights[0][this_index+6]), np.array(batch_weights[0][this_index+7]), np.array(batch_weights[0][this_index+8]), 
+            # np.array(batch_weights[0][this_index+9]), np.array([])]
+
+            # for i in [1,2,3,4,6,7,8,9]:
+            #     helper = [np.array(batch_weights[0][this_index+i])]
+            #     for j in range(1, J):
+            #         helper = np.add(helper, np.array(batch_weights[i][this_index+i]))
+            #     helper = helper / J
+            #     global_weights_out[i] = helper
+
+            # take local batchnorm paramters
+            global_weights_out = [[np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(batch_weights[0][this_index+1]),
+            np.array(batch_weights[0][this_index+2]), np.array(batch_weights[0][this_index+3]), np.array(batch_weights[0][this_index+4]),
+            np.array([]), np.array(batch_weights[0][this_index+6]), np.array(batch_weights[0][this_index+7]), np.array(batch_weights[0][this_index+8]), 
+            np.array(batch_weights[0][this_index+9]), np.array([])] for j in range (J)]
+            
+            for i in [1,2,3,4,6,7,8,9]:
+                for j in range(J):
+                    global_weights_out[j][i] = np.array(batch_weights[j][this_index+i])
+
+            # only take conv parameters
+            #global_weights_out = np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]])
+
+            # for only conv parameters and averaged batchnorm parameters approach
+            # global_inv_sigmas_out = [np.array(global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]),
+            # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]),
+            # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]), np.array([]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]),
+            # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]),
+            # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]), np.array([])]
+
+            # for local batchnorm parameters
+            global_inv_sigmas_out = [[np.array(global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(np.array(batch_weights[j][this_index+1]).shape[0]* [1 / sigma]),
+            np.array(np.array(batch_weights[j][this_index+1]).shape[0]* [1 / sigma]), np.array(np.array(batch_weights[j][this_index+1]).shape[0]* [1 / sigma]),
+            np.array(np.array(batch_weights[j][this_index+1]).shape[0]* [1 / sigma]), np.array([]), np.array(np.array(batch_weights[j][this_index+1]).shape[0]* [1 / sigma]),
+            np.array(np.array(batch_weights[j][this_index+1]).shape[0]* [1 / sigma]), np.array(np.array(batch_weights[j][this_index+1]).shape[0]* [1 / sigma]),
+            np.array(np.array(batch_weights[j][this_index+1]).shape[0]* [1 / sigma]), np.array([])] for j in range (J)]
+
+            # for only conv parameters and averaged batchnorm parameters approach
+            # logger.info("Branch A, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+
+            # for local batchnorm parameters
+            logger.info("Branch A, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out[0]]))
+        elif layer_index == (n_layers - 1) and n_layers > 2:
+            softmax_bias, softmax_inv_sigma = process_softmax_bias(batch_weights, last_layer_const, sigma, sigma0)
+
+            # handle the last batch normalisation layer
+            
+            this_index = densenet_index_3(layer_index)
+            layer_type = model_layer_type[this_index]
+            prev_layer_type = model_layer_type[this_index - 1]
+            first_fc_identifier = (('fc' in layer_type or 'classifier' in layer_type) and ('conv' in prev_layer_type or 'features' in layer_type))
+
+            gwc_shape = global_weights_c.shape
+            if "conv" in layer_type or 'features' in layer_type:
+                 # average batchnorm parameters
+                # global_weights_out = [np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(batch_weights[0][this_index+1]),
+                # np.array(batch_weights[0][this_index+2]), np.array(batch_weights[0][this_index+3]), np.array(batch_weights[0][this_index+4]),
+                # np.array([])]
+
+                # for i in range(1, 5):
+                #     helper = [np.array(batch_weights[0][this_index+i])]
+                #     for j in range(1, J):
+                #         helper = np.add(helper, np.array(batch_weights[i][this_index+i]))
+                #     helper = helper / J
+                #     global_weights_out[i] = helper
+
+                # take local batchnorm paramters
+                global_weights_out = [[np.array(global_weights_c[:, 0:gwc_shape[1]]), np.array(batch_weights[0][this_index+1]),
+                np.array(batch_weights[0][this_index+2]), np.array(batch_weights[0][this_index+3]), np.array(batch_weights[0][this_index+4]),
+                np.array([])] for j in range (J)]
+                
+                for i in range(1, 5):
+                    for j in range(J):
+                        global_weights_out[j][i] = np.array(batch_weights[j][this_index+i])
+
+                # only take conv parameters
+                #global_weights_out = np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]])
+
+                # for only conv parameters and averaged batchnorm parameters approach
+                # global_inv_sigmas_out = [np.array(global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]),
+                # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]),
+                # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]), np.array([])]
+
+                # for local batchnorm parameters
+                global_inv_sigmas_out = [[np.array(global_sigmas_c[:, 0:gwc_shape[1]]), np.array(np.array(batch_weights[j][this_index+1]).shape[0]* [1 / sigma]),
+                np.array(np.array(batch_weights[j][this_index+1]).shape[0]* [1 / sigma]), np.array(np.array(batch_weights[j][this_index+1]).shape[0]* [1 / sigma]),
+                np.array(np.array(batch_weights[j][this_index+1]).shape[0]* [1 / sigma]), np.array([])] for j in range (J)]
+            elif "fc" in layer_type or 'classifier' in layer_type:
+                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
+
+                global_weights_out = [global_weights_out for i in range(J)]
+                global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
+
+            # for only conv parameters and averaged batchnorm parameters approach
+            # logger.info("#### Branch B, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+
+            # for local batchnorm parameters
+            logger.info("#### Branch B, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out[0]]))
+
+        elif (layer_index > 1 and layer_index < (n_layers - 1)):
+           
+            this_index = densenet_index_3(layer_index)
+            layer_type = model_layer_type[this_index]
+            
+            gwc_shape = global_weights_c.shape
+
+            if "conv" in layer_type or 'features' in layer_type:
+                # average batchnorm parameters
+                # global_weights_out = [np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(batch_weights[0][this_index+1]),
+                # np.array(batch_weights[0][this_index+2]), np.array(batch_weights[0][this_index+3]), np.array(batch_weights[0][this_index+4]),
+                # np.array([])]
+
+                # for i in range(1, 5):
+                #     helper = [np.array(batch_weights[0][this_index+i])]
+                #     for j in range(1, J):
+                #         helper = np.add(helper, np.array(batch_weights[i][this_index+i]))
+                #     helper = helper / J
+                #     global_weights_out[i] = helper
+
+                # take local batchnorm paramters
+                global_weights_out = [[np.array(global_weights_c[:, 0:gwc_shape[1]]), np.array(batch_weights[0][this_index+1]),
+                np.array(batch_weights[0][this_index+2]), np.array(batch_weights[0][this_index+3]), np.array(batch_weights[0][this_index+4]),
+                np.array([])] for j in range (J)]
+                
+                for i in range(1, 5):
+                    for j in range(J):
+                        global_weights_out[j][i] = np.array(batch_weights[j][this_index+i])
+
+                # only take conv parameters
+                #global_weights_out = np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]])
+
+                # for only conv parameters and averaged batchnorm parameters approach
+                # global_inv_sigmas_out = [np.array(global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]),
+                # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]),
+                # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]), np.array([])]
+
+                # for local batchnorm parameters
+                # global_inv_sigmas_out = [[np.array(global_sigmas_c[:, 0:gwc_shape[1]]), np.array(global_sigmas_c[:np.array(batch_weights[j][this_index+1]).shape[0], gwc_shape[1]-1]),
+                # np.array(global_sigmas_c[:np.array(batch_weights[j][this_index+1]).shape[0], gwc_shape[1]-1]), np.array(global_sigmas_c[:np.array(batch_weights[j][this_index+1]).shape[0], gwc_shape[1]-1]),
+                # np.array(global_sigmas_c[:np.array(batch_weights[j][this_index+1]).shape[0], gwc_shape[1]-1]), np.array([])] for j in range (J)]
+                global_inv_sigmas_out = [[np.array(global_sigmas_c[:, 0:gwc_shape[1]]), np.array(np.array(batch_weights[j][this_index+1]).shape[0]* [1 / sigma]),
+                np.array(np.array(batch_weights[j][this_index+1]).shape[0]* [1 / sigma]), np.array(np.array(batch_weights[j][this_index+1]).shape[0]* [1 / sigma]),
+                np.array(np.array(batch_weights[j][this_index+1]).shape[0]* [1 / sigma]), np.array([])] for j in range (J)]
+            elif "fc" in layer_type or 'classifier' in layer_type:
+                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
+                
+                global_weights_out = [global_weights_out for i in range(J)]
+                global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
+
+            # for only conv parameters and averaged batchnorm parameters approach
+            # logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+
+            # for local batchnorm parameters
+            logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out[0]]))
+    else:
+        if layer_index <= 1:
+            if n_layers == 2:
+                softmax_bias, softmax_inv_sigma = process_softmax_bias(batch_weights, last_layer_const, sigma, sigma0)
+                global_weights_out = [softmax_bias]
+                global_inv_sigmas_out = [softmax_inv_sigma]
+            
+            global_weights_out = [global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]], global_weights_c[:, init_channel_kernel_dims[int(layer_index/2)]]]
+            global_inv_sigmas_out = [global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]], global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]]]
+
+            logger.info("Branch A, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+
+        elif layer_index == (n_layers - 1) and n_layers > 2:
+            softmax_bias, softmax_inv_sigma = process_softmax_bias(batch_weights, last_layer_const, sigma, sigma0)
+
+            layer_type = model_layer_type[2 * layer_index - 2]
+            prev_layer_type = model_layer_type[2 * layer_index - 2 - 2]
+            #first_fc_identifier = ('fc' in layer_type and 'conv' in prev_layer_type)
+            first_fc_identifier = (('fc' in layer_type or 'classifier' in layer_type) and ('conv' in prev_layer_type or 'features' in layer_type))
+
+            # if first_fc_identifier:
+            #     global_weights_out = [global_weights_c[:, 0:-softmax_bias.shape[0]-1].T, 
+            #                             global_weights_c[:, -softmax_bias.shape[0]-1], 
+            #                             global_weights_c[:, -softmax_bias.shape[0]:], 
+            #                             softmax_bias]
+
+            #     global_inv_sigmas_out = [global_sigmas_c[:, 0:-softmax_bias.shape[0]-1].T, 
+            #                                 global_sigmas_c[:, -softmax_bias.shape[0]-1], 
+            #                                 global_sigmas_c[:, -softmax_bias.shape[0]:], 
+            #                                 softmax_inv_sigma]
+            # else:
+            #     global_weights_out = [global_weights_c[:, 0:matching_shapes[layer_index - 1 - 1]].T, 
+            #                             global_weights_c[:, matching_shapes[layer_index - 1 - 1]], 
+            #                             global_weights_c[:, matching_shapes[layer_index - 1 - 1]+1:], 
+            #                             softmax_bias]
+
+            #     global_inv_sigmas_out = [global_sigmas_c[:, 0:matching_shapes[layer_index - 1 - 1]].T, 
+            #                                 global_sigmas_c[:, matching_shapes[layer_index - 1 - 1]], 
+            #                                 global_sigmas_c[:, matching_shapes[layer_index - 1 - 1]+1:], 
+            #                                 softmax_inv_sigma]
+
+            # remove fitting the last layer
+            # if first_fc_identifier:
+            #     global_weights_out = [global_weights_c[:, 0:-softmax_bias.shape[0]-1].T, 
+            #                             global_weights_c[:, -softmax_bias.shape[0]-1]]
+
+            #     global_inv_sigmas_out = [global_sigmas_c[:, 0:-softmax_bias.shape[0]-1].T, 
+            #                                 global_sigmas_c[:, -softmax_bias.shape[0]-1]]
+            # else:
+            #     global_weights_out = [global_weights_c[:, 0:matching_shapes[layer_index - 1 - 1]].T, 
+            #                             global_weights_c[:, matching_shapes[layer_index - 1 - 1]]]
+
+            #     global_inv_sigmas_out = [global_sigmas_c[:, 0:matching_shapes[layer_index - 1 - 1]].T, 
+            #                                 global_sigmas_c[:, matching_shapes[layer_index - 1 - 1]]]
+            layer_type = model_layer_type[2 * layer_index - 2]
+            gwc_shape = global_weights_c.shape
+            if "conv" in layer_type or 'features' in layer_type:
+                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1], global_weights_c[:, gwc_shape[1]-1]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1], global_sigmas_c[:, gwc_shape[1]-1]]
+            elif "fc" in layer_type or 'classifier' in layer_type:
+                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
+
+            logger.info("#### Branch B, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+
+        elif (layer_index > 1 and layer_index < (n_layers - 1)):
+            layer_type = model_layer_type[2 * layer_index - 2]
+            gwc_shape = global_weights_c.shape
+
+            if "conv" in layer_type or 'features' in layer_type:
+                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1], global_weights_c[:, gwc_shape[1]-1]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1], global_sigmas_c[:, gwc_shape[1]-1]]
+            elif "fc" in layer_type or 'classifier' in layer_type:
+                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
+            logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+
+    logger.info("global inv sigma out shape: {}".format([giso.shape for giso in global_inv_sigmas_out[0]]))
+    # logger.info("global inv sigma out shape: {}".format([giso.shape for giso in global_inv_sigmas_out]))
+
+    map_out = [[g_w / g_s for g_w, g_s in zip(global_weights_out[i], global_inv_sigmas_out[i])] for i in range(J)]
+    # map_out = [g_w / g_s for g_w, g_s in zip(global_weights_out, global_inv_sigmas_out)]
+    return map_out, assignment_c, L_next
+
+def layer_wise_group_descent_3_averaged(batch_weights, layer_index, batch_frequencies, sigma_layers, 
+                                sigma0_layers, gamma_layers, it, 
+                                model_meta_data, 
+                                model_layer_type,
+                                n_layers,
+                                matching_shapes,
+                                args):
+    """
+    We implement a layer-wise matching here:
+    """
+    if type(sigma_layers) is not list:
+        sigma_layers = (n_layers - 1) * [sigma_layers]
+    if type(sigma0_layers) is not list:
+        sigma0_layers = (n_layers - 1) * [sigma0_layers]
+    if type(gamma_layers) is not list:
+        gamma_layers = (n_layers - 1) * [gamma_layers]
+
+    last_layer_const = []
+    total_freq = sum(batch_frequencies)
+    for f in batch_frequencies:
+        last_layer_const.append(f / total_freq)
+
+    # J: number of workers
+    J = len(batch_weights)
+    # init_num_kernel: the number of conv filters in the first conv layer 
+    init_num_kernel = batch_weights[0][0].shape[0]
+
+    # for saving (#channel * k * k)
+    # no adapatedtion for batch_normalisation weights necessary since only first entry relevant
+    init_channel_kernel_dims = []
+    for bw in batch_weights[0]:
+        if len(bw.shape) > 1:
+            init_channel_kernel_dims.append(bw.shape[1])
+    logger.info("init_channel_kernel_dims: {}".format(init_channel_kernel_dims))
+    
+    sigma_bias_layers = sigma_layers
+    sigma0_bias_layers = sigma0_layers
+    mu0 = 0.
+    mu0_bias = 0.1
+    assignment_c = [None for j in range(J)]
+    L_next = None
+
+    sigma = sigma_layers[layer_index - 1]
+    sigma_bias = sigma_bias_layers[layer_index - 1]
+    gamma = gamma_layers[layer_index - 1]
+    sigma0 = sigma0_layers[layer_index - 1]
+    sigma0_bias = sigma0_bias_layers[layer_index - 1]
+
+    # Densenet121 needs to be handled separately because of its batch normalisation layers
+    if args.model == "densenet121":
+        if layer_index <= 1:
+            weights_bias = [batch_weights[j][0] for j in range(J)]
+
+            sigma_inv_prior = np.array(
+                init_channel_kernel_dims[layer_index - 1] * [1 / sigma0])
+            mean_prior = np.array(init_channel_kernel_dims[layer_index - 1] * [mu0])
+            sigma_inv_layer = [np.array(init_channel_kernel_dims[layer_index - 1] * [1 / sigma]) for j in range(J)]
+
+        elif layer_index == (n_layers - 1) and n_layers > 2:
+            # handle the last batch normalisation layer
+            # total of 320 layers, so this will be the 319th layer
+            this_index = densenet_index_3(layer_index)
+            layer_type = model_layer_type[this_index]
+            prev_layer_type = model_layer_type[this_index - 1]
+            first_fc_identifier = (('fc' in layer_type or 'classifier' in layer_type) and ('conv' in prev_layer_type or 'features' in layer_type))
+
+            # we switch to ignore the last layer here:
+            
+            if "conv" in layer_type:
+                weights_bias = [batch_weights[j][this_index] for j in range(J)]
+
+                sigma_inv_prior = np.array((weights_bias[0].shape[1]) * [1 / sigma0])
+                mean_prior = np.array((weights_bias[0].shape[1]) * [mu0])
+                sigma_inv_layer = [np.array((weights_bias[j].shape[1]) * [1 / sigma]) for j in range(J)]
+            elif "fc" in layer_type or 'classifier' in layer_type:   
+                weights_bias = [np.hstack((batch_weights[j][this_index].reshape(-1, 1), 
+                                                batch_weights[j][this_index + 1].reshape(-1, 1))) for j in range(J)]
+
+                sigma_inv_prior = np.array([1 / sigma0_bias] + (weights_bias[0].shape[1] - 1) * [1 / sigma0])
+                mean_prior = np.array([mu0_bias] + (weights_bias[0].shape[1] - 1) * [mu0])
+                
+                sigma_inv_layer = [np.array([1 / sigma_bias] + (weights_bias[j].shape[1] - 1) * [1 / sigma]) for j in range(J)]
+
+        elif (layer_index > 1 and layer_index < (n_layers - 1)):
+            
+            this_index = densenet_index_3(layer_index)
+            layer_type = model_layer_type[this_index]
+            prev_layer_type = model_layer_type[densenet_index_3(layer_index-1)]
+            
+            weights_bias = [batch_weights[j][this_index] for j in range(J)]         
+
+            sigma_inv_prior = np.array((weights_bias[0].shape[1]) * [1 / sigma0])
+            mean_prior = np.array((weights_bias[0].shape[1]) * [mu0])
+            sigma_inv_layer = [np.array((weights_bias[j].shape[1]) * [1 / sigma]) for j in range(J)]
+    else:
+        if layer_index <= 1:
+            weights_bias = [np.hstack((batch_weights[j][0], batch_weights[j][layer_index * 2 - 1].reshape(-1, 1))) for j in range(J)]
+
+            sigma_inv_prior = np.array(
+                init_channel_kernel_dims[layer_index - 1] * [1 / sigma0] + [1 / sigma0_bias])
+            mean_prior = np.array(init_channel_kernel_dims[layer_index - 1] * [mu0] + [mu0_bias])
+
+            # handling 2-layer neural network
+            # hier wurde ine Ändrung vorgenommen, damit kein Fehler gemeldet wird. Dieser Codeteil sollte
+            # allerdings nicht aufgerufen werden
+            if n_layers == 2:
+                sigma_inv_layer = [
+                    np.array((weights_bias[j].shape[1] - 1) * [1 / sigma] + [1 / sigma_bias] + [y / sigma for y in last_layer_const[j]]) for j in range(J)]
+            else:
+                sigma_inv_layer = [np.array(init_channel_kernel_dims[layer_index - 1] * [1 / sigma] + [1 / sigma_bias]) for j in range(J)]
+
+        elif layer_index == (n_layers - 1) and n_layers > 2:
+            # our assumption is that this branch will consistently handle the last fc layers
+            layer_type = model_layer_type[2 * layer_index - 2]
+            prev_layer_type = model_layer_type[2 * layer_index - 2 - 2]
+            first_fc_identifier = (('fc' in layer_type or 'classifier' in layer_type) and ('conv' in prev_layer_type or 'features' in layer_type))
+
+            # if first_fc_identifier:
+            #     weights_bias = [np.hstack((batch_weights[j][2 * layer_index - 2].T, 
+            #                                 batch_weights[j][2 * layer_index - 1].reshape(-1, 1),
+            #                                 batch_weights[j][2 * layer_index])) for j in range(J)]
+            # else:
+            #     weights_bias = [np.hstack((batch_weights[j][2 * layer_index - 2].T, 
+            #                                 batch_weights[j][2 * layer_index - 1].reshape(-1, 1),
+            #                                 batch_weights[j][2 * layer_index])) for j in range(J)]
+
+            # we switch to ignore the last layer here:
+            if first_fc_identifier:
+                weights_bias = [np.hstack((batch_weights[j][2 * layer_index - 2].T, 
+                                            batch_weights[j][2 * layer_index - 1].reshape(-1, 1))) for j in range(J)]
+            else:
+                weights_bias = [np.hstack((batch_weights[j][2 * layer_index - 2].T, 
+                                            batch_weights[j][2 * layer_index - 1].reshape(-1, 1))) for j in range(J)]
+
+
+            sigma_inv_prior = np.array([1 / sigma0_bias] + (weights_bias[0].shape[1] - 1) * [1 / sigma0])
+            mean_prior = np.array([mu0_bias] + (weights_bias[0].shape[1] - 1) * [mu0])
+            
+            # hwang: this needs to be handled carefully
+            #sigma_inv_layer = [np.array([1 / sigma_bias] + [y / sigma for y in last_layer_const[j]]) for j in range(J)]
+            #sigma_inv_layer = [np.array([1 / sigma_bias] + (weights_bias[j].shape[1] - 1) * [1 / sigma]) for j in range(J)]
+
+            #sigma_inv_layer = [np.array((matching_shapes[layer_index - 2]) * [1 / sigma] + [1 / sigma_bias] + [y / sigma for y in last_layer_const[j]]) for j in range(J)]
+            
+            #sigma_inv_layer = [np.array((matching_shapes[layer_index - 2]) * [1 / sigma] + [1 / sigma_bias]) for j in range(J)]
+            sigma_inv_layer = [np.array([1 / sigma_bias] + (weights_bias[j].shape[1] - 1) * [1 / sigma]) for j in range(J)]
+
+        elif (layer_index > 1 and layer_index < (n_layers - 1)):
+            layer_type = model_layer_type[2 * layer_index - 2]
+            prev_layer_type = model_layer_type[2 * layer_index - 2 - 2]
+
+            if 'conv' in layer_type or 'features' in layer_type:
+                weights_bias = [np.hstack((batch_weights[j][2 * layer_index - 2], batch_weights[j][2 * layer_index - 1].reshape(-1, 1))) for j in range(J)]
+
+            elif 'fc' in layer_type or 'classifier' in layer_type:
+                # we need to determine if the type of the current layer is the same as it's previous layer
+                # i.e. we need to identify if the fully connected layer we're working on is the first fc layer after the conv block
+                #first_fc_identifier = ('fc' in layer_type and 'conv' in prev_layer_type)
+                first_fc_identifier = (('fc' in layer_type or 'classifier' in layer_type) and ('conv' in prev_layer_type or 'features' in layer_type))
+                #logger.info("first_fc_identifier: {}".format(first_fc_identifier))
+                if first_fc_identifier:
+                    weights_bias = [np.hstack((batch_weights[j][2 * layer_index - 2].T, batch_weights[j][2 * layer_index - 1].reshape(-1, 1))) for j in range(J)]
+                else:
+                    weights_bias = [np.hstack((batch_weights[j][2 * layer_index - 2].T, batch_weights[j][2 * layer_index - 1].reshape(-1, 1))) for j in range(J)]          
+
+            sigma_inv_prior = np.array([1 / sigma0_bias] + (weights_bias[0].shape[1] - 1) * [1 / sigma0])
+            mean_prior = np.array([mu0_bias] + (weights_bias[0].shape[1] - 1) * [mu0])
+            sigma_inv_layer = [np.array([1 / sigma_bias] + (weights_bias[j].shape[1] - 1) * [1 / sigma]) for j in range(J)]
+
+    logger.info("Layer index: {}, init_num_kernel: {}".format(layer_index, init_num_kernel))
+    logger.info("weights bias: {}".format(weights_bias[0].shape))
+    logger.info("sigma_inv_prior shape: {}".format(sigma_inv_prior.shape))
+    logger.info("mean_prior shape: {}".format(mean_prior.shape))
+    logger.info("sigma_inv_layer shape: {}".format(sigma_inv_layer[0].shape))
+
+    assignment_c, global_weights_c, global_sigmas_c = match_layer(weights_bias, sigma_inv_layer, mean_prior,
+                                                                  sigma_inv_prior, gamma, it)
+
+    L_next = global_weights_c.shape[0]
+
+    if args.model == "densenet121":
+        if layer_index <= 1:
+            this_index = densenet_index_3(layer_index)
+            logger.info(global_weights_c.shape)
+            # average batchnorm parameters
+            global_weights_out = [np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(batch_weights[0][this_index+1]),
+            np.array(batch_weights[0][this_index+2]), np.array(batch_weights[0][this_index+3]), np.array(batch_weights[0][this_index+4]),
+            np.array([]), np.array(batch_weights[0][this_index+6]), np.array(batch_weights[0][this_index+7]), np.array(batch_weights[0][this_index+8]), 
+            np.array(batch_weights[0][this_index+9]), np.array([])]
+
+            for i in [1,2,3,4,6,7,8,9]:
+                helper = np.array(batch_weights[0][this_index+i])
+                for j in range(1, J):
+                    helper = np.add(helper, np.array(batch_weights[j][this_index+i]))
+                helper = helper / J
+                global_weights_out[i] = helper
+
+            # take local batchnorm paramters
+            # global_weights_out = [[np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(batch_weights[0][this_index+1]),
+            # np.array(batch_weights[0][this_index+2]), np.array(batch_weights[0][this_index+3]), np.array(batch_weights[0][this_index+4]),
+            # np.array([]), np.array(batch_weights[0][this_index+6]), np.array(batch_weights[0][this_index+7]), np.array(batch_weights[0][this_index+8]), 
+            # np.array(batch_weights[0][this_index+9]), np.array([])] for j in range (J)]
+            
+            # for i in [1,2,3,4,6,7,8,9]:
+            #     for j in range(J):
+            #         global_weights_out[j][i] = np.array(batch_weights[j][this_index+i])
+
+            # only take conv parameters
+            #global_weights_out = np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]])
+
+            # for only conv parameters and averaged batchnorm parameters approach
+            global_inv_sigmas_out = [np.array(global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(np.array(batch_weights[0][this_index+1]).shape[0]* [1 / sigma]),
+            np.array(np.array(batch_weights[0][this_index+1]).shape[0]* [1 / sigma]), np.array(np.array(batch_weights[0][this_index+1]).shape[0]* [1 / sigma]),
+            np.array(np.array(batch_weights[0][this_index+1]).shape[0]* [1 / sigma]), np.array([]), np.array(np.array(batch_weights[0][this_index+1]).shape[0]* [1 / sigma]),
+            np.array(np.array(batch_weights[0][this_index+1]).shape[0]* [1 / sigma]), np.array(np.array(batch_weights[0][this_index+1]).shape[0]* [1 / sigma]),
+            np.array(np.array(batch_weights[0][this_index+1]).shape[0]* [1 / sigma]), np.array([])]
+
+            # for local batchnorm parameters
+            # global_inv_sigmas_out = [[np.array(global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]),
+            # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]),
+            # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]), np.array([]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]),
+            # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]),
+            # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]), np.array([])] for j in range (J)]
+
+            # for only conv parameters and averaged batchnorm parameters approach
+            logger.info("Branch A, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+
+            # for local batchnorm parameters
+            # logger.info("Branch A, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out[0]]))
+        elif layer_index == (n_layers - 1) and n_layers > 2:
+            softmax_bias, softmax_inv_sigma = process_softmax_bias(batch_weights, last_layer_const, sigma, sigma0)
+
+            # handle the last batch normalisation layer
+            
+            this_index = densenet_index_3(layer_index)
+            layer_type = model_layer_type[this_index]
+            prev_layer_type = model_layer_type[this_index - 1]
+            first_fc_identifier = (('fc' in layer_type or 'classifier' in layer_type) and ('conv' in prev_layer_type or 'features' in layer_type))
+
+            gwc_shape = global_weights_c.shape
+            if "conv" in layer_type or 'features' in layer_type:
+                 # average batchnorm parameters
+                global_weights_out = [np.array(global_weights_c[:, 0:gwc_shape[1]]), np.array(batch_weights[0][this_index+1]),
+                np.array(batch_weights[0][this_index+2]), np.array(batch_weights[0][this_index+3]), np.array(batch_weights[0][this_index+4]),
+                np.array([])]
+
+                for i in range(1, 5):
+                    helper = np.array(batch_weights[0][this_index+i])
+                    for j in range(1, J):
+                        helper = np.add(helper, np.array(batch_weights[j][this_index+i]))
+                    helper = helper / J
+                    global_weights_out[i] = helper
+
+                # take local batchnorm paramters
+                # global_weights_out = [[np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(batch_weights[0][this_index+1]),
+                # np.array(batch_weights[0][this_index+2]), np.array(batch_weights[0][this_index+3]), np.array(batch_weights[0][this_index+4]),
+                # np.array([])] for j in range (J)]
+                
+                # for i in range(1, 5):
+                #     for j in range(J):
+                #         global_weights_out[j][i] = np.array(batch_weights[j][this_index+i])
+
+                # only take conv parameters
+                #global_weights_out = np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]])
+
+                # for only conv parameters and averaged batchnorm parameters approach
+                global_inv_sigmas_out = [np.array(global_sigmas_c[:, 0:gwc_shape[1]]), np.array(np.array(batch_weights[0][this_index+1]).shape[0]* [1 / sigma]),
+                np.array(np.array(batch_weights[0][this_index+1]).shape[0]* [1 / sigma]), np.array(np.array(batch_weights[0][this_index+1]).shape[0]* [1 / sigma]),
+                np.array(np.array(batch_weights[0][this_index+1]).shape[0]* [1 / sigma]), np.array([])]
+
+                # for local batchnorm parameters
+                # global_inv_sigmas_out = [[np.array(global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]),
+                # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]),
+                # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]), np.array([])] for j in range (J)]
+            elif "fc" in layer_type or 'classifier' in layer_type:
+                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
+
+                # global_weights_out = [global_weights_out for i in range(J)]
+                # global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
+
+            # for only conv parameters and averaged batchnorm parameters approach
+            logger.info("#### Branch B, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+
+            # for local batchnorm parameters
+            # logger.info("#### Branch B, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out[0]]))
+
+        elif (layer_index > 1 and layer_index < (n_layers - 1)):
+           
+            this_index = densenet_index_3(layer_index)
+            layer_type = model_layer_type[this_index]
+            
+            gwc_shape = global_weights_c.shape
+
+            if "conv" in layer_type or 'features' in layer_type:
+                # average batchnorm parameters
+                global_weights_out = [np.array(global_weights_c[:, 0:gwc_shape[1]]), np.array(batch_weights[0][this_index+1]),
+                np.array(batch_weights[0][this_index+2]), np.array(batch_weights[0][this_index+3]), np.array(batch_weights[0][this_index+4]),
+                np.array([])]
+
+                for i in range(1, 5):
+                    helper = np.array(batch_weights[0][this_index+i])
+                    for j in range(1, J):
+                        helper = np.add(helper, np.array(batch_weights[j][this_index+i]))
+                    helper = helper / J
+                    global_weights_out[i] = helper
+
+                # take local batchnorm paramters
+                # global_weights_out = [[np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(batch_weights[0][this_index+1]),
+                # np.array(batch_weights[0][this_index+2]), np.array(batch_weights[0][this_index+3]), np.array(batch_weights[0][this_index+4]),
+                # np.array([])] for j in range (J)]
+                
+                # for i in range(1, 5):
+                #     for j in range(J):
+                #         global_weights_out[j][i] = np.array(batch_weights[j][this_index+i])
+
+                # only take conv parameters
+                #global_weights_out = np.array(global_weights_c[:, :init_channel_kernel_dims[int(layer_index/2)]])
+
+                # for only conv parameters and averaged batchnorm parameters approach
+                global_inv_sigmas_out = [np.array(global_sigmas_c[:, 0:gwc_shape[1]]), np.array(np.array(batch_weights[0][this_index+1]).shape[0]* [1 / sigma]),
+                np.array(np.array(batch_weights[0][this_index+1]).shape[0]* [1 / sigma]), np.array(np.array(batch_weights[0][this_index+1]).shape[0]* [1 / sigma]),
+                np.array(np.array(batch_weights[0][this_index+1]).shape[0]* [1 / sigma]), np.array([])]
+
+                # for local batchnorm parameters
+                # global_inv_sigmas_out = [[np.array(global_sigmas_c[:, :init_channel_kernel_dims[int(layer_index/2)]]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]),
+                # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]), np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]),
+                # np.array(global_sigmas_c[:, init_channel_kernel_dims[int(layer_index/2)]-1]), np.array([])] for j in range (J)]
+            elif "fc" in layer_type or 'classifier' in layer_type:
+                global_weights_out = [global_weights_c[:, 0:gwc_shape[1]-1].T, global_weights_c[:, gwc_shape[1]-1]]
+                global_inv_sigmas_out = [global_sigmas_c[:, 0:gwc_shape[1]-1].T, global_sigmas_c[:, gwc_shape[1]-1]]
+                
+                # global_weights_out = [global_weights_out for i in range(J)]
+                # global_inv_sigmas_out = [global_inv_sigmas_out for i in range(J)]
+
+            # for only conv parameters and averaged batchnorm parameters approach
+            logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out]))
+
+            # for local batchnorm parameters
+            # logger.info("Branch layer index, Layer index: {}, Global weights out shapes: {}".format(layer_index, [gwo.shape for gwo in global_weights_out[0]]))
     else:
         if layer_index <= 1:
             if n_layers == 2:

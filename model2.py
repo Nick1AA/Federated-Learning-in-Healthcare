@@ -10,10 +10,14 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as cp
 from torch import Tensor
 from sklearn.preprocessing import MinMaxScaler
-
+import logging
 
 from types import FunctionType
 from typing import Any
+
+logging.basicConfig(format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+                            datefmt='%H:%M:%S', level=logging.DEBUG)
+logger = logging.getLogger("model2")
 
 try:
     from torch.hub import load_state_dict_from_url  # noqa: 401
@@ -107,9 +111,12 @@ class _DenseLayer(nn.Module):
     # torchscript does not yet support *args, so we overload method
     # allowing it to take either a List[Tensor] or single Tensor
     def forward(self, input: Tensor) -> Tensor:  # noqa: F811
+        
         if isinstance(input, Tensor):
+            
             prev_features = [input]
         else:
+            
             prev_features = input
 
         if self.memory_efficient and self.any_requires_grad(prev_features):
@@ -342,25 +349,63 @@ def densenet201(pretrained: bool = False, progress: bool = True, **kwargs: Any) 
 
 class _DenseLayerContainer(nn.Module):
     def __init__(
-        self, num_filters, starting_index: int, drop_rate: float, memory_efficient: bool = False
+        self, num_filters, starting_index: int, layer_index: int, num_input_features: int, growth_rate: int, bn_size: int,
+        drop_rate: float, memory_efficient: bool = False
     ) -> None:
         super().__init__()
-        self.norm1: nn.BatchNorm2d
-        self.add_module("norm1", nn.BatchNorm2d(num_filters[starting_index]))
-        self.relu1: nn.ReLU
-        self.add_module("relu1", nn.ReLU(inplace=True))
-        self.conv1: nn.Conv2d
-        self.add_module(
-            "conv1", nn.Conv2d(num_filters[starting_index], num_filters[starting_index + 1], kernel_size=1, stride=1, bias=False)
-        )
-        self.norm2: nn.BatchNorm2d
-        self.add_module("norm2", nn.BatchNorm2d(num_filters[starting_index + 2]))
-        self.relu2: nn.ReLU
-        self.add_module("relu2", nn.ReLU(inplace=True))
-        self.conv2: nn.Conv2d
-        self.add_module(
-            "conv2", nn.Conv2d(num_filters[starting_index + 2], num_filters[starting_index+3], kernel_size=3, stride=1, padding=1, bias=False)
-        )
+        if layer_index == 0:
+            self.norm1: nn.BatchNorm2d
+            self.add_module("norm1", nn.BatchNorm2d(num_filters[starting_index]))
+            self.relu1: nn.ReLU
+            self.add_module("relu1", nn.ReLU(inplace=True))
+            self.conv1: nn.Conv2d
+            self.add_module(
+                "conv1", nn.Conv2d(num_filters[starting_index], num_filters[starting_index + 1], kernel_size=1, stride=1, bias=False)
+            )
+            self.norm2: nn.BatchNorm2d
+            self.add_module("norm2", nn.BatchNorm2d(num_filters[starting_index + 2]))
+            self.relu2: nn.ReLU
+            self.add_module("relu2", nn.ReLU(inplace=True))
+            self.conv2: nn.Conv2d
+            self.add_module(
+                "conv2", nn.Conv2d(num_filters[starting_index + 2], num_filters[starting_index+3], kernel_size=3, stride=1, padding=1, bias=False)
+            )
+            self.additional_filters = num_filters[starting_index+3]
+        else:
+            self.norm1: nn.BatchNorm2d
+            if layer_index == starting_index:
+                self.add_module("norm1", nn.BatchNorm2d(num_input_features))
+            else:
+                self.add_module("norm1", nn.BatchNorm2d(num_filters[starting_index]))
+            self.relu1: nn.ReLU
+            self.add_module("relu1", nn.ReLU(inplace=True))
+            self.conv1: nn.Conv2d
+            if layer_index <= starting_index:
+                self.add_module(
+                "conv1", nn.Conv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False)
+                )
+            else:
+                self.add_module(
+                    "conv1", nn.Conv2d(num_filters[starting_index], num_filters[starting_index + 1], kernel_size=1, stride=1, bias=False)
+                )
+            self.norm2: nn.BatchNorm2d
+            if layer_index <= starting_index:
+                self.add_module("norm1", nn.BatchNorm2d(bn_size * growth_rate))
+            else:
+                self.add_module("norm2", nn.BatchNorm2d(num_filters[starting_index + 2]))
+            self.relu2: nn.ReLU
+            self.add_module("relu2", nn.ReLU(inplace=True))
+            self.conv2: nn.Conv2d
+            if layer_index <= starting_index:
+                self.add_module(
+                "conv2", nn.Conv2d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False)
+                )
+                self.additional_filters = growth_rate
+            else:
+                self.add_module(
+                    "conv2", nn.Conv2d(num_filters[starting_index + 2], num_filters[starting_index+3], kernel_size=3, stride=1, padding=1, bias=False)
+                )
+                self.additional_filters = num_filters[starting_index+3]
         self.drop_rate = float(drop_rate)
         self.memory_efficient = memory_efficient
 
@@ -394,9 +439,12 @@ class _DenseLayerContainer(nn.Module):
     # torchscript does not yet support *args, so we overload method
     # allowing it to take either a List[Tensor] or single Tensor
     def forward(self, input: Tensor) -> Tensor:  # noqa: F811
+        # logging.info("Input shape {}".format(len(input)))
         if isinstance(input, Tensor):
+            # logging.info("Input is a Tensor")
             prev_features = [input]
         else:
+            # logging.info("Input is not a Tensor")
             prev_features = input
 
         if self.memory_efficient and self.any_requires_grad(prev_features):
@@ -419,22 +467,52 @@ class _DenseBlockContainer(nn.ModuleDict):
     def __init__(
         self,
         num_layers: int,
+        num_input_features: int,
         num_filters,
         starting_index: int,
+        layer_index: int,
+        bn_size: int,
+        growth_rate: int,
         drop_rate: float,
         memory_efficient: bool = False,
     ) -> None:
         super().__init__()
         total = starting_index
         for i in range(num_layers):
-            layer = _DenseLayerContainer(
+            if layer_index in range(total, total+4):
+                layer = _DenseLayerContainer(
                 num_filters,
                 starting_index = total,
+                layer_index = layer_index,
+                num_input_features = num_input_features,
+                bn_size = bn_size,
+                growth_rate = growth_rate,
                 drop_rate=drop_rate,
                 memory_efficient=memory_efficient
-            )
+                )
+                num_input_features = num_input_features + layer.additional_filters
+            elif layer_index >= (total+4):
+                layer = _DenseLayerContainer(
+                    num_filters,
+                    starting_index = total,
+                    layer_index = 0,
+                    num_input_features = 0,
+                    drop_rate=drop_rate,
+                    memory_efficient=memory_efficient
+                )
+                num_input_features = num_input_features + layer.additional_filters
+            else:
+                layer = _DenseLayer(
+                num_input_features,
+                growth_rate=growth_rate,
+                bn_size=bn_size,
+                drop_rate=drop_rate,
+                memory_efficient=memory_efficient,
+                )
+                num_input_features = num_input_features + growth_rate
             self.add_module("denselayer%d" % (i + 1), layer)
             total += 4
+        self.output_features = num_input_features   
 
     def forward(self, init_features: Tensor) -> Tensor:
         features = [init_features]
@@ -472,9 +550,11 @@ class DenseNetContainer(nn.Module):
         self,
         block_config: Tuple[int, int, int, int] = (6, 12, 24, 16),
         num_filters: List = [],
+        layer_index: int = 1,
         bn_size: int = 4,
         drop_rate: float = 0,
         num_classes: int = 14,
+        growth_rate: int = 32,
         memory_efficient: bool = False,
     ) -> None:
 
@@ -495,27 +575,50 @@ class DenseNetContainer(nn.Module):
 
         # Each denseblock
         total = 2
+        growth_rate = 32
+        num_features = num_filters[total-1]
         for i, num_layers in enumerate(block_config):
-            block = _DenseBlockContainer(
-                num_layers=num_layers,
-                num_filters=num_filters,
-                starting_index = total,
-                drop_rate=drop_rate,
-                memory_efficient=memory_efficient
-            )
+            if layer_index  < total:
+                block = _DenseBlock(
+                    num_layers=num_layers,
+                    num_input_features=num_features,
+                    bn_size=bn_size,
+                    growth_rate=growth_rate,
+                    drop_rate=drop_rate,
+                    memory_efficient=memory_efficient
+                )
+                num_features = num_features + num_layers * growth_rate
+            else:
+                block = _DenseBlockContainer(
+                    num_layers=num_layers,
+                    num_input_features=num_features,
+                    num_filters=num_filters,
+                    starting_index = total,
+                    layer_index = layer_index,
+                    bn_size=bn_size,
+                    growth_rate=growth_rate,
+                    drop_rate=drop_rate,
+                    memory_efficient=memory_efficient
+                )
+                num_features = block.output_features
             total = total +  num_layers * 4
             self.features.add_module("denseblock%d" % (i + 1), block)
             if i != len(block_config) - 1:
-                trans = _TransitionContainer(num_input_features=num_filters[total], num_output_features=num_filters[total + 1] )
+                if layer_index <= total:
+                    trans = _Transition(num_input_features=num_features, num_output_features=num_features // 2)
+                    num_features = num_features // 2
+                else:
+                    trans = _TransitionContainer(num_input_features=num_filters[total], num_output_features=num_filters[total + 1] )
+                    num_features = num_filters[total + 1]
                 self.features.add_module("transition%d" % (i + 1), trans)
                 total += 2
             
 
         # Final batch norm
-        self.features.add_module("norm5", nn.BatchNorm2d(num_filters[total]))
+        self.features.add_module("norm5", nn.BatchNorm2d(num_features))
 
         # Linear layer
-        self.classifier = nn.Linear(num_filters[total+1], num_classes)
+        self.classifier = nn.Linear(num_features, num_classes)
 
         # Official init from torch repo.
         for m in self.modules():
@@ -544,17 +647,18 @@ def _densenetContainer(
     arch: str,
     block_config: Tuple[int, int, int, int],
     num_filters,
+    layer_index,
     pretrained: bool,
     progress: bool,
     **kwargs: Any,
 ) -> DenseNetContainer:
-    model = DenseNetContainer(block_config, num_filters, **kwargs)
+    model = DenseNetContainer(block_config, num_filters, layer_index, **kwargs)
     if pretrained:
         _load_state_dict(model, model_urls[arch], progress)
     return model
 
 
-def densenet121Container(num_filters, pretrained: bool = False, progress: bool = True, **kwargs: Any) -> DenseNetContainer:
+def densenet121Container(num_filters, layer_index, pretrained: bool = False, progress: bool = True, **kwargs: Any) -> DenseNetContainer:
     r"""Densenet-121 model from
     `"Densely Connected Convolutional Networks" <https://arxiv.org/pdf/1608.06993.pdf>`_.
     The required minimum input size of the model is 29x29.
@@ -564,7 +668,7 @@ def densenet121Container(num_filters, pretrained: bool = False, progress: bool =
         memory_efficient (bool) - If True, uses checkpointing. Much more memory efficient,
           but slower. Default: *False*. See `"paper" <https://arxiv.org/pdf/1707.06990.pdf>`_.
     """
-    return _densenetContainer("densenet121", (6, 12, 24, 16), num_filters, pretrained, progress, **kwargs)
+    return _densenetContainer("densenet121", (6, 12, 24, 16), num_filters, layer_index, pretrained, progress, **kwargs)
 
 
 def densenet161Container(num_filters, pretrained: bool = False, progress: bool = True, **kwargs: Any) -> DenseNetContainer:
@@ -604,3 +708,4 @@ def densenet201Container(num_filters, pretrained: bool = False, progress: bool =
           but slower. Default: *False*. See `"paper" <https://arxiv.org/pdf/1707.06990.pdf>`_.
     """
     return _densenetContainer("densenet201", (6, 12, 48, 32), num_filters, pretrained, progress, **kwargs)
+

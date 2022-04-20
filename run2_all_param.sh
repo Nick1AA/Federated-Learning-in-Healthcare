@@ -1,5 +1,5 @@
 #!/bin/sh
-python main.py --model=densenet121 \
+python main2_all_param.py --model=densenet121 \
 --dataset=chexpert \
 --lr=0.0001 \
 --retrain_lr=0.0001 \

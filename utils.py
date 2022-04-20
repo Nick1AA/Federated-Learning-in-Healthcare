@@ -25,6 +25,7 @@ from combine_nets import prepare_uniform_weights, prepare_sanity_weights, prepar
 
 from vgg import *
 from model import *
+from model2 import *
 
 
 
@@ -53,9 +54,25 @@ def densenet_index_2(layer_index):
     if layer_index <= 1:
         this_index = layer_index -1
     else:
+        this_index = 6 + (layer_index - 2) * 6
+    
+    return this_index
+
+def densenet_index_3(layer_index):
+    if layer_index <= 1:
+        this_index = layer_index -1
+    else:
         this_index = 11 + (layer_index - 2) * 6
     
     return this_index
+
+def is_batchnorm(layer_index):
+    if layer_index == 2:
+        return True
+    elif (layer_index >= 3) and (layer_index % 2 == 1):
+        return True
+    else:
+        return False
 
 def densenet_index_to_layer(index):
     #notice layer index starts here with 0 and above at 1
@@ -68,13 +85,26 @@ def densenet_index_to_layer(index):
     elif (index+1) % 6 == 0:
         layer_index = (index-11) / 3 + 3
     elif index == 726:
-        layer_index = 247
+        layer_index = 241
     else:
         help = (index+1) % 6
         layer_index = (index - help - 11) / 3 + 4
-    return layer_index
+    return int(layer_index)
 
 def densenet_index_to_layer_2(index):
+    #notice layer index starts here with 0 and above at 1
+    if index <= 5:
+        layer_index = 0
+    elif (index) % 6 == 0:
+        layer_index = (index-6) / 6 + 1
+    elif index == 726:
+        layer_index = 120
+    else:
+        help = (index) % 6
+        layer_index = (index - help - 6) / 6 + 1
+    return int(layer_index)
+
+def densenet_index_to_layer_3(index):
     #notice layer index starts here with 0 and above at 1
     if index <= 10:
         layer_index = 0
@@ -85,7 +115,191 @@ def densenet_index_to_layer_2(index):
     else:
         help = (index+1) % 6
         layer_index = (index - help - 11) / 6 + 1
-    return layer_index
+    return int(layer_index)
+
+def match_global_to_local_weights(hungarian_weights, assignments, client_index, not_layerwise = False):
+    
+    dummy_model = densenet121()
+    new_weights_list = []
+    help_index = -1
+    counter = 0
+    for param_idx, (key_name, param) in enumerate(dummy_model.state_dict().items()):
+        logger.info("Parameter {}: {}".format(param_idx, key_name))
+        layer_index = densenet_index_to_layer(param_idx)
+        logger.info("Layer {}".format(layer_index))
+        if layer_index != help_index:
+            help_index = layer_index
+            counter = 0
+        else:
+            counter += 1
+        if "classifier.bias" in key_name:
+            layer_index += 1
+        if "num_batches_tracked" in key_name:
+            new_weights_list.append(np.array([]))
+            continue
+        if "classifier" in key_name:
+            if not not_layerwise:
+                new_weights = hungarian_weights[layer_index]
+            else:
+                new_weights = hungarian_weights[layer_index][client_index]
+            logger.info("Shape of the new weights: {}".format(np.array(new_weights).shape))
+            new_weights_list.append(np.array(new_weights))
+        else:
+            #logger.info("Those are the assignments")
+            logger.info(assignments[layer_index][client_index])
+            #logger.info("Safety check")
+            new_weights = np.array((param))
+            if "conv" in key_name:
+                new_weights = np.zeros((len(assignments[layer_index][client_index]), np.array(param).shape[1] * np.array(param).shape[2] *np.array(param).shape[3]))
+            for j in range(len(assignments[layer_index][client_index])):
+                #if (len(assignments[layer_index][client_index]) == np.array(param).shape[0]):
+                    #logger.info("passed")
+                #else:
+                    #logger.info("failed")
+                if not not_layerwise:
+                    # if "conv" in key_name:
+                    #     logger.info("Weights shape {}".format(np.array(hungarian_weights[layer_index]).shape))
+                    #     new_weights[j] = hungarian_weights[layer_index][assignments[layer_index][client_index][j]]
+                    #else:
+                    # new_weights = np.zeros((len(assignments[layer_index][client_index]), np.array(hungarian_weights[layer_index][counter]).shape[1]))
+                    # logger.info("Weights shape {}".format(np.array(hungarian_weights[layer_index][counter]).shape))
+                    new_weights[j] = hungarian_weights[layer_index][counter][assignments[layer_index][client_index][j]]
+                else:
+                    # if "conv" in key_name:
+                    #     logger.info("Weights shape {}".format(np.array(hungarian_weights[layer_index][client_index]).shape))
+                    #     new_weights[j] = hungarian_weights[layer_index][client_index][assignments[layer_index][client_index][j]]
+                    # else:
+                    # new_weights = np.zeros((len(assignments[layer_index][client_index]), np.array(hungarian_weights[layer_index][client_index][counter]).shape[1]))
+                    # logger.info("Weights shape {}".format(np.array(hungarian_weights[layer_index][client_index][counter]).shape))
+                    new_weights[j] = hungarian_weights[layer_index][client_index][counter][assignments[layer_index][client_index][j]]
+            logger.info("Shape of the new weights: {}".format(np.array(new_weights).shape))
+            new_weights_list.append(np.array(new_weights))
+    return new_weights_list
+
+def match_global_to_local_weights_2(hungarian_weights, assignments, client_index, not_layerwise = False):
+    
+    dummy_model = densenet121()
+    new_weights_list = []
+    help_index = -1
+    counter = 0
+    for param_idx, (key_name, param) in enumerate(dummy_model.state_dict().items()):
+        logger.info("Parameter {}: {}".format(param_idx, key_name))
+        layer_index = densenet_index_to_layer_2(param_idx)
+        logger.info("Layer {}".format(layer_index))
+        if layer_index != help_index:
+            help_index = layer_index
+            counter = 0
+        else:
+            counter += 1
+        if "classifier.bias" in key_name:
+            layer_index += 1
+        if "num_batches_tracked" in key_name:
+            new_weights_list.append(np.array([]))
+            continue
+        if "classifier" in key_name:
+            if not not_layerwise:
+                new_weights = hungarian_weights[layer_index]
+            else:
+                new_weights = hungarian_weights[layer_index][client_index]
+            logger.info("Shape of the new weights: {}".format(np.array(new_weights).shape))
+            new_weights_list.append(np.array(new_weights))
+        else:
+            #logger.info("Those are the assignments")
+            logger.info(assignments[layer_index][client_index])
+            #logger.info("Safety check")
+            new_weights = np.array((param))
+            if "conv" in key_name:
+                new_weights = np.zeros((len(assignments[layer_index][client_index]), np.array(param).shape[1] * np.array(param).shape[2] *np.array(param).shape[3]))
+            for j in range(len(assignments[layer_index][client_index])):
+                #if (len(assignments[layer_index][client_index]) == np.array(param).shape[0]):
+                    #logger.info("passed")
+                #else:
+                    #logger.info("failed")
+                if not not_layerwise:
+                    # if "conv" in key_name:
+                    #     logger.info("Weights shape {}".format(np.array(hungarian_weights[layer_index]).shape))
+                    #     new_weights[j] = hungarian_weights[layer_index][assignments[layer_index][client_index][j]]
+                    #else:
+                    # new_weights = np.zeros((len(assignments[layer_index][client_index]), np.array(hungarian_weights[layer_index][counter]).shape[1]))
+                    # logger.info("Weights shape {}".format(np.array(hungarian_weights[layer_index][counter]).shape))
+                    new_weights[j] = hungarian_weights[layer_index][counter][assignments[layer_index][client_index][j]]
+                else:
+                    # if "conv" in key_name:
+                    #     logger.info("Weights shape {}".format(np.array(hungarian_weights[layer_index][client_index]).shape))
+                    #     new_weights[j] = hungarian_weights[layer_index][client_index][assignments[layer_index][client_index][j]]
+                    # else:
+                    # new_weights = np.zeros((len(assignments[layer_index][client_index]), np.array(hungarian_weights[layer_index][client_index][counter]).shape[1]))
+                    # logger.info("Weights shape {}".format(np.array(hungarian_weights[layer_index][client_index][counter]).shape))
+                    new_weights[j] = hungarian_weights[layer_index][client_index][counter][assignments[layer_index][client_index][j]]
+            logger.info("Shape of the new weights: {}".format(np.array(new_weights).shape))
+            new_weights_list.append(np.array(new_weights))
+    return new_weights_list
+
+def match_global_to_local_weights_3(hungarian_weights, assignments, client_index, not_layerwise = False):
+    
+    dummy_model = densenet121()
+    new_weights_list = []
+    help_index = -1
+    counter = 0
+    for param_idx, (key_name, param) in enumerate(dummy_model.state_dict().items()):
+        logger.info("Parameter {}: {}".format(param_idx, key_name))
+        layer_index = densenet_index_to_layer_3(param_idx)
+        logger.info("Layer {}".format(layer_index))
+        if layer_index != help_index:
+            help_index = layer_index
+            counter = 0
+        else:
+            counter += 1
+        if "classifier.bias" in key_name:
+            layer_index += 1
+        if "num_batches_tracked" in key_name:
+            new_weights_list.append(np.array([]))
+        elif "classifier" in key_name:
+            if not not_layerwise:
+                new_weights = hungarian_weights[layer_index]
+            else:
+                new_weights = hungarian_weights[layer_index][client_index]
+            logger.info("Shape of the new weights: {}".format(np.array(new_weights).shape))
+            new_weights_list.append(np.array(new_weights))
+        elif "norm" in key_name:
+            if not not_layerwise:
+                new_weights = hungarian_weights[layer_index][counter]
+            else:
+                new_weights = hungarian_weights[layer_index][client_index][counter]
+            logger.info("Shape of the new weights: {}".format(np.array(new_weights).shape))
+            new_weights_list.append(np.array(new_weights))
+        else:
+            #logger.info("Those are the assignments")
+            logger.info(assignments[layer_index][client_index])
+            #logger.info("Safety check")
+            new_weights = np.array((param))
+            if "conv" in key_name:
+                new_weights = np.zeros((len(assignments[layer_index][client_index]), np.array(param).shape[1] * np.array(param).shape[2] *np.array(param).shape[3]))
+            for j in range(len(assignments[layer_index][client_index])):
+                #if (len(assignments[layer_index][client_index]) == np.array(param).shape[0]):
+                    #logger.info("passed")
+                #else:
+                    #logger.info("failed")
+                if not not_layerwise:
+                    # if "conv" in key_name:
+                    #     logger.info("Weights shape {}".format(np.array(hungarian_weights[layer_index]).shape))
+                    #     new_weights[j] = hungarian_weights[layer_index][assignments[layer_index][client_index][j]]
+                    #else:
+                    # new_weights = np.zeros((len(assignments[layer_index][client_index]), np.array(hungarian_weights[layer_index][counter]).shape[1]))
+                    # logger.info("Weights shape {}".format(np.array(hungarian_weights[layer_index][counter]).shape))
+                    new_weights[j] = hungarian_weights[layer_index][counter][assignments[layer_index][client_index][j]]
+                else:
+                    # if "conv" in key_name:
+                    #     logger.info("Weights shape {}".format(np.array(hungarian_weights[layer_index][client_index]).shape))
+                    #     new_weights[j] = hungarian_weights[layer_index][client_index][assignments[layer_index][client_index][j]]
+                    # else:
+                    # new_weights = np.zeros((len(assignments[layer_index][client_index]), np.array(hungarian_weights[layer_index][client_index][counter]).shape[1]))
+                    # logger.info("Weights shape {}".format(np.array(hungarian_weights[layer_index][client_index][counter]).shape))
+                    new_weights[j] = hungarian_weights[layer_index][client_index][counter][assignments[layer_index][client_index][j]]
+            logger.info("Shape of the new weights: {}".format(np.array(new_weights).shape))
+            new_weights_list.append(np.array(new_weights))
+    return new_weights_list
+
 """ Original methods from the FedMA implementation """
 def mkdirs(dirpath):
     try:
@@ -162,27 +376,32 @@ def partition_data(dataset, datadir, logdir, partition, n_nets, alpha, args):
     if partition == "homo":
         if dataset == 'chexpert':
             logger.info("Assigning patients to local clients")
-            patients = list(set(X_train))
-            patients = np.random.permutation(patients)
-            batch_patients = np.array_split(patients, n_nets)
+            if args.retrain:
+                patients = list(set(X_train))
+                patients = np.random.permutation(patients)
+                batch_patients = np.array_split(patients, n_nets)
 
-            help_list = [[0] for x in range(n_nets)]
+                help_list = [[0] for x in range(n_nets)]
 
-            for i in range(n_train):
-                found_it = False
-                for n in range(n_nets):
-                    if found_it:
-                        break
-                    for patient in batch_patients[n]:
-                        if patient == X_train[i]:
-                            help_list[n].append(i)
-                            found_it = True
+                for i in range(n_train):
+                    found_it = False
+                    for n in range(n_nets):
+                        if found_it:
                             break
-                    
-            for n in range(n_nets):
-                help_list[n].pop(0)
-            
-            net_dataidx_map = {i: help_list[i] for i in range(n_nets)}
+                        for patient in batch_patients[n]:
+                            if patient == X_train[i]:
+                                help_list[n].append(i)
+                                found_it = True
+                                break
+                        
+                for n in range(n_nets):
+                    help_list[n].pop(0)
+                
+                net_dataidx_map = {i: help_list[i] for i in range(n_nets)}
+                save_datamap(net_dataidx_map)
+            else:
+                folder = "./saved_weights/Durchlauf6/"
+                net_dataidx_map = load_datamap_from_folder(folder)
             
             logger.info("Assignment of patients done")
 
@@ -546,6 +765,12 @@ def save_model(model, model_index):
         torch.save(model.state_dict(), f_)
     return
 
+def save_datamap(datamap):
+    logger.info("saving datamap")
+    with open("dataidx_map", "wb") as f_:
+        torch.save(datamap, f_)
+    return
+
 def save_weights(weights, alias):
     logger.info("saving weights-{}".format(alias))
     with open("./saved_weights/trained_weights"+str(alias), "wb") as f_:
@@ -557,6 +782,17 @@ def load_weights(alias):
     with open("./saved_weights/trained_weights"+str(alias), "rb") as f_:
         weights = torch.load(f_)
     return weights
+
+def load_weights_from_folder(alias, folder = "./saved_weights/"):
+    logger.info("loading weights-{}".format(alias))
+    with open(str(folder) + str(alias), "rb") as f_:
+        weights = torch.load(f_)
+    return weights
+
+def load_datamap_from_folder(folder):
+    with open(folder+"dataidx_map", "rb") as f_:
+        dataidx_map = torch.load(f_)
+    return dataidx_map
 
 def load_model(model, model_index, rank=0, device="cpu"):
     #

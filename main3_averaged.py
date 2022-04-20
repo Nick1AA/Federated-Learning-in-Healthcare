@@ -18,10 +18,10 @@ from torch import optim
 from distutils.dir_util import copy_tree
 import logging
 
-from matching.pfnm import layer_wise_group_descent, layer_wise_group_descent_2, layer_wise_group_descent_3, layer_wise_group_descent_all_param, layer_wise_group_descent_2_all_param
+from matching.pfnm import layer_wise_group_descent, layer_wise_group_descent_2, layer_wise_group_descent_3, layer_wise_group_descent_3_averaged, layer_wise_group_descent_all_param, layer_wise_group_descent_2_all_param
 from matching.pfnm import block_patching, patch_weights, block_patching_2, block_patching_3
 
-from matching_performance import compute_local_model_auroc_global_dataset, compute_model_averaging_accuracy, compute_full_cnn_accuracy, compute_local_model_auroc, compute_local_model_auroc_2, compute_local_model_auroc_global_dataset_2
+from matching_performance import *
 
 logging.basicConfig(format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
                             datefmt='%H:%M:%S', level=logging.DEBUG)
@@ -1331,6 +1331,403 @@ def local_retrain_2(local_datasets, weights, args, mode="bottom-up", freezing_in
 
     return matched_cnn
 
+def local_retrain_3(local_datasets, weights, args, mode="bottom-up", freezing_index=0, ori_assignments=None, device="cpu"):
+    """
+    freezing_index :: starting from which layer we update the model weights,
+                      i.e. freezing_index = 0 means we train the whole network normally
+                           freezing_index = len(model) means we freez the entire network
+    """
+    if args.model == "lenet":
+        num_filters = [weights[0].shape[0], weights[2].shape[0]]
+        kernel_size = 5
+        input_dim = weights[4].shape[0]
+        hidden_dims = [weights[4].shape[1]]
+        output_dim = weights[-1].shape[0]
+        logger.info("Num filters: {}, Input dim: {}, hidden_dims: {}, output_dim: {}".format(num_filters, input_dim, hidden_dims, output_dim))
+
+        matched_cnn = LeNetContainer(
+                                    num_filters=num_filters,
+                                    kernel_size=kernel_size,
+                                    input_dim=input_dim,
+                                    hidden_dims=hidden_dims,
+                                    output_dim=output_dim)
+    elif args.model == "vgg":
+        matched_shapes = [w.shape for w in weights]
+        matched_cnn = matched_vgg11(matched_shapes=matched_shapes)
+    elif args.model == "simple-cnn":
+        # input_channel, num_filters, kernel_size, input_dim, hidden_dims, output_dim=10):
+        # [(9, 75), (9,), (19, 225), (19,), (475, 123), (123,), (123, 87), (87,), (87, 10), (10,)]
+        if args.dataset in ("cifar10", "cinic10"):
+            input_channel = 3
+        elif args.dataset == "mnist":
+            input_channel = 1
+
+        num_filters = [weights[0].shape[0], weights[2].shape[0]]
+        input_dim = weights[4].shape[0]
+        hidden_dims = [weights[4].shape[1], weights[6].shape[1]]
+        matched_cnn = SimpleCNNContainer(input_channel=input_channel, 
+                                        num_filters=num_filters, 
+                                        kernel_size=5, 
+                                        input_dim=input_dim, 
+                                        hidden_dims=hidden_dims, 
+                                        output_dim=10)
+
+    elif args.model == 'densenet121':
+        layer_index = densenet_index_to_layer(freezing_index)
+                
+        layer_index += 1
+        if mode not in ("block-wise", "squeezing"):
+            # ein densenet121 hat viel mehr Schichten, um ein solches NN nach der Vorlage der weights nachzubauen, werden die Dimensionen Blockweise eingelesen
+            # Vermutung, dass die weights immer Gewicht und bias enthalten --> falsch
+
+            num_filters = []
+        # densenet121 hat insgesamt 242 conv oder norm Schichten inkl. eine classifier Schicht
+            # matched_shapes = [w.shape for w in weights]
+            logger.info("This is the size of the matched shapes:")
+            logger.info(len(matched_shapes))
+            logger.info(matched_shapes)
+            for i in range (1, 243):
+                # logger.info(weights[densenet_index(i)].shape[0])
+                # if len(weights[densenet_index(i)+1].shape) is not 1:
+                num_filters.append(np.array(weights[densenet_index(i)]).shape[0])
+                # else:
+                #     num_filters.append(weights[densenet_index(i)+1].shape)
+        
+        # if needed needs to be adapted
+        elif mode == "block-wise":
+            __unfreezing_list = []
+            for fi in freezing_index:
+                __unfreezing_list.append(2*fi-2)
+                __unfreezing_list.append(2*fi-1)
+
+            __fixed_indices = set([i*2 for i in range(241)]) 
+            dummy_model = densenet121()
+
+            num_filters = []
+            for pi, param in enumerate(dummy_model.parameters()):
+                if pi in __fixed_indices:
+                    if pi in __unfreezing_list:
+                        num_filters.append(param.size()[0])
+                    else:
+                        num_filters.append(weights[pi].shape[0])
+            del dummy_model
+            logger.info("################ Num filters for now are : {}".format(num_filters))
+
+            # note that we hard coded index of the last conv layer here to make sure the dimension is compatible
+            if freezing_index[0] != 240:
+            #if freezing_index[0] not in (240, 241):
+                input_dim = weights[482].shape[0]
+            else:
+                # we need to estimate the output shape here:
+                shape_estimator = densenet121Flex(num_filters=num_filters)
+                dummy_input = torch.rand(1, 3, 32, 32)
+                estimated_output = shape_estimator(dummy_input)
+                #estimated_shape = (estimated_output[1], estimated_output[2], estimated_output[3])
+                input_dim = estimated_output.view(-1).size()[0]
+            num_filters.append(input_dim)
+
+        elif mode == "squeezing":
+            pass
+        
+        if mode == "squeezing":
+            matched_cnn = densenet121()
+        else:
+            matched_cnn = densenet121Container(num_filters = num_filters, layer_index = layer_index)
+
+        weights = adapt_densenet_weights(matched_cnn = matched_cnn, weights = weights, layer_index = layer_index)
+            
+    elif args.model == "moderate-cnn":
+        #[(35, 27), (35,), (68, 315), (68,), (132, 612), (132,), (132, 1188), (132,), 
+        #(260, 1188), (260,), (260, 2340), (260,), 
+        #(4160, 1025), (1025,), (1025, 515), (515,), (515, 10), (10,)]
+        if mode not in ("block-wise", "squeezing"):
+            num_filters = [weights[0].shape[0], weights[2].shape[0], weights[4].shape[0], weights[6].shape[0], weights[8].shape[0], weights[10].shape[0]]
+            input_dim = weights[12].shape[0]
+            hidden_dims = [weights[12].shape[1], weights[14].shape[1]]
+
+            input_dim = weights[12].shape[0]
+        elif mode == "block-wise":
+            # for block-wise retraining the `freezing_index` becomes a range of indices
+            # so at here we need to generate a unfreezing list:
+            __unfreezing_list = []
+            for fi in freezing_index:
+                __unfreezing_list.append(2*fi-2)
+                __unfreezing_list.append(2*fi-1)
+
+            # we need to do two changes here:
+            # i) switch the number of filters in the freezing indices block to the original size
+            # ii) cut the correspoidng color channels
+            __fixed_indices = set([i*2 for i in range(6)]) # 0, 2, 4, 6, 8, 10
+            dummy_model = ModerateCNN()
+
+            num_filters = []
+            for pi, param in enumerate(dummy_model.parameters()):
+                if pi in __fixed_indices:
+                    if pi in __unfreezing_list:
+                        num_filters.append(param.size()[0])
+                    else:
+                        num_filters.append(weights[pi].shape[0])
+            del dummy_model
+            logger.info("################ Num filters for now are : {}".format(num_filters))
+            # note that we hard coded index of the last conv layer here to make sure the dimension is compatible
+            if freezing_index[0] != 6:
+            #if freezing_index[0] not in (6, 7):
+                input_dim = weights[12].shape[0]
+            else:
+                # we need to estimate the output shape here:
+                shape_estimator = ModerateCNNContainerConvBlocks(num_filters=num_filters)
+                dummy_input = torch.rand(1, 3, 32, 32)
+                estimated_output = shape_estimator(dummy_input)
+                #estimated_shape = (estimated_output[1], estimated_output[2], estimated_output[3])
+                input_dim = estimated_output.view(-1).size()[0]
+
+            if (freezing_index[0] <= 6) or (freezing_index[0] > 8):
+                hidden_dims = [weights[12].shape[1], weights[14].shape[1]]
+            else:
+                dummy_model = ModerateCNN()
+                for pi, param in enumerate(dummy_model.parameters()):
+                    if pi == 2*freezing_index[0] - 2:
+                        _desired_shape = param.size()[0]
+                if freezing_index[0] == 7:
+                    hidden_dims = [_desired_shape, weights[14].shape[1]]
+                elif freezing_index[0] == 8:
+                    hidden_dims = [weights[12].shape[1], _desired_shape]
+        elif mode == "squeezing":
+            pass
+
+
+        if args.dataset in ("cifar10", "cinic10"):
+            if mode == "squeezing":
+                matched_cnn = ModerateCNN()
+            else:
+                matched_cnn = ModerateCNNContainer(3,
+                                                    num_filters, 
+                                                    kernel_size=3, 
+                                                    input_dim=input_dim, 
+                                                    hidden_dims=hidden_dims, 
+                                                    output_dim=10)
+        elif args.dataset == "mnist":
+            matched_cnn = ModerateCNNContainer(1,
+                                                num_filters, 
+                                                kernel_size=3, 
+                                                input_dim=input_dim, 
+                                                hidden_dims=hidden_dims, 
+                                                output_dim=10)
+    
+    new_state_dict = {}
+    model_counter = 0
+    n_layers = 121 # originally int(len(weights) / 2)
+
+    # we hardcoded this for now: will probably make changes later
+    #if mode != "block-wise":
+    if mode not in ("block-wise", "squeezing"):
+        __non_loading_indices = []
+    else:
+        if mode == "block-wise":
+            if freezing_index[0] != n_layers:
+                __non_loading_indices = copy.deepcopy(__unfreezing_list)
+                __non_loading_indices.append(__unfreezing_list[-1]+1) # add the index of the weight connects to the next layer
+            else:
+                __non_loading_indices = copy.deepcopy(__unfreezing_list)
+        elif mode == "squeezing":
+            # please note that at here we need to reconstruct the entire local network and retrain it
+            __non_loading_indices = [i for i in range(len(weights))]
+
+    def __reconstruct_weights(weight, assignment, layer_ori_shape, matched_num_filters=None, weight_type="conv_weight", slice_dim="filter"):
+        # what contains in the param `assignment` is the assignment for a certain layer, a certain worker
+        """
+        para:: slice_dim: for reconstructing the conv layers, for each of the three consecutive layers, we need to slice the 
+               filter/kernel to reconstruct the first conv layer; for the third layer in the consecutive block, we need to 
+               slice the color channel 
+        """
+        if weight_type == "conv_weight":
+            if slice_dim == "filter":
+                res_weight = weight[assignment, :]
+            elif slice_dim == "channel":
+                _ori_matched_shape = list(copy.deepcopy(layer_ori_shape))
+                _ori_matched_shape[1] = matched_num_filters
+                trans_weight = trans_next_conv_layer_forward(weight, _ori_matched_shape)
+                sliced_weight = trans_weight[assignment, :]
+                res_weight = trans_next_conv_layer_backward(sliced_weight, layer_ori_shape)
+        elif weight_type == "bias":
+            res_weight = weight[assignment]
+        elif weight_type == "first_fc_weight":
+            # NOTE: please note that in this case, we pass the `estimated_shape` to `layer_ori_shape`:
+            __ori_shape = weight.shape
+            res_weight = weight.reshape(matched_num_filters, layer_ori_shape[2]*layer_ori_shape[3]*__ori_shape[1])[assignment, :]
+            res_weight = res_weight.reshape((len(assignment)*layer_ori_shape[2]*layer_ori_shape[3], __ori_shape[1]))
+        elif weight_type == "fc_weight":
+            if slice_dim == "filter":
+                res_weight = weight.T[assignment, :]
+                #res_weight = res_weight.T
+            elif slice_dim == "channel":
+                res_weight = weight[assignment, :].T
+        return res_weight
+
+    # handle the conv layers part which is not changing
+    for param_idx, (key_name, param) in enumerate(matched_cnn.state_dict().items()):
+        if (param_idx in __non_loading_indices) and (freezing_index[0] != n_layers):
+            # we need to reconstruct the weights here s.t.
+            # i) shapes of the weights are euqal to the shapes of the weight in original model (before matching)
+            # ii) each neuron comes from the corresponding global neuron
+            _matched_weight = weights[param_idx]
+            _matched_num_filters = weights[__non_loading_indices[0]].shape[0]
+            #
+            # we now use this `_slice_dim` for both conv layers and fc layers
+            if __non_loading_indices.index(param_idx) != 2:
+                _slice_dim = "filter" # please note that for biases, it doesn't really matter if we're going to use filter or channel
+            else:
+                _slice_dim = "channel"
+
+            # we treat batch normalisation the same as a bias for now
+            if "conv" in key_name:
+                if "weight" in key_name:
+                    _res_weight = __reconstruct_weights(weight=_matched_weight, assignment=ori_assignments, 
+                                                        layer_ori_shape=param.size(), matched_num_filters=_matched_num_filters,
+                                                        weight_type="conv_weight", slice_dim=_slice_dim)
+                    temp_dict = {key_name: torch.from_numpy(_res_weight.reshape(param.size()))}
+                elif "bias" in key_name:
+                    _res_bias = __reconstruct_weights(weight=_matched_weight, assignment=ori_assignments, 
+                                                        layer_ori_shape=param.size(), matched_num_filters=_matched_num_filters,
+                                                        weight_type="bias", slice_dim=_slice_dim)                   
+                    temp_dict = {key_name: torch.from_numpy(_res_bias)}
+            elif "norm" in key_name:
+                _res_bias = __reconstruct_weights(weight=_matched_weight, assignment=ori_assignments, 
+                                                        layer_ori_shape=param.size(), matched_num_filters=_matched_num_filters,
+                                                        weight_type="bias", slice_dim=_slice_dim)                   
+                temp_dict = {key_name: torch.from_numpy(_res_bias)}
+            elif "fc" in key_name or "classifier" in key_name:
+                if "weight" in key_name:
+                    if freezing_index[0] != 6:
+                        _res_weight = __reconstruct_weights(weight=_matched_weight, assignment=ori_assignments, 
+                                                            layer_ori_shape=param.size(), matched_num_filters=_matched_num_filters,
+                                                            weight_type="fc_weight", slice_dim=_slice_dim)
+                        temp_dict = {key_name: torch.from_numpy(_res_weight)}
+                    else:
+                        # that's for handling the first fc layer that is connected to the conv blocks
+                        _res_weight = __reconstruct_weights(weight=_matched_weight, assignment=ori_assignments, 
+                                                            layer_ori_shape=estimated_output.size(), matched_num_filters=_matched_num_filters,
+                                                            weight_type="first_fc_weight", slice_dim=_slice_dim)
+                        temp_dict = {key_name: torch.from_numpy(_res_weight.T)}            
+                elif "bias" in key_name:
+                    _res_bias = __reconstruct_weights(weight=_matched_weight, assignment=ori_assignments, 
+                                                        layer_ori_shape=param.size(), matched_num_filters=_matched_num_filters,
+                                                        weight_type="bias", slice_dim=_slice_dim)
+                    temp_dict = {key_name: torch.from_numpy(_res_bias)}
+        else:
+            if "conv" in key_name:
+                if "weight" in key_name:
+                    temp_dict = {key_name: torch.from_numpy(weights[param_idx].reshape(param.size()))}
+                elif "bias" in key_name:
+                    temp_dict = {key_name: torch.from_numpy(weights[param_idx])}
+            elif "norm" in key_name:
+                temp_dict = {key_name: torch.from_numpy(weights[param_idx])}  
+            elif "fc" in key_name or "classifier" in key_name:
+                if "weight" in key_name:
+                    temp_dict = {key_name: torch.from_numpy(weights[param_idx].T)}
+                elif "bias" in key_name:
+                    temp_dict = {key_name: torch.from_numpy(weights[param_idx])}
+        
+        new_state_dict.update(temp_dict)
+    matched_cnn.load_state_dict(new_state_dict)
+
+    for param_idx, param in enumerate(matched_cnn.parameters()):
+        if mode == "bottom-up":
+            # for this freezing mode, we freeze the layer before freezing index
+            if param_idx < freezing_index:
+                param.requires_grad = False
+        elif mode == "per-layer":
+            # for this freezing mode, we only unfreeze the freezing index
+            if param_idx not in (densenet_index_3(freezing_index), densenet_index_3(freezing_index)+1):
+                param.requires_grad = False
+        elif mode == "block-wise":
+            # for block-wise retraining the `freezing_index` becomes a range of indices
+            if param_idx not in __non_loading_indices:
+                param.requires_grad = False
+        elif mode == "squeezing":
+            pass
+
+    matched_cnn.to(device).train()
+    # start training last fc layers:
+    train_dl_local = local_datasets[0]
+    test_dl_local = local_datasets[1]
+
+    # hier überprüfen, ob dies auch für chexpert gilt
+    if mode != "block-wise":
+        if freezing_index < (len(weights) - 2):
+            optimizer_fine_tune = optim.SGD(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=args.retrain_lr, momentum=0.9)
+        else:
+            optimizer_fine_tune = optim.SGD(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=(args.retrain_lr/10), momentum=0.9, weight_decay=0.0001)
+    else:
+        if args.model == 'densenet121':
+            optimizer_fine_tune = optim.Adam(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=0.0001, weight_decay=0.0001, amsgrad=True)
+        else:
+            #optimizer_fine_tune = optim.SGD(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=args.retrain_lr, momentum=0.9)
+            optimizer_fine_tune = optim.Adam(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=0.001, weight_decay=0.0001, amsgrad=True)
+        
+    criterion_fine_tune = nn.CrossEntropyLoss().to(device)
+
+    logger.info('n_training: %d' % len(train_dl_local))
+    logger.info('n_test: %d' % len(test_dl_local))
+
+    if not (args.dataset == "chexpert"):
+        train_acc = compute_accuracy(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
+        test_acc, conf_matrix = compute_accuracy(matched_cnn, test_dl_local, get_confusion_matrix=True, device=device, dataset=args.dataset)
+
+        logger.info('>> Pre-Training Training accuracy: {}'.format(train_acc))
+        logger.info('>> Pre-Training Test accuracy: {}'.format(test_acc))
+    else:
+        train_auroc = compute_auroc(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
+        test_auroc = compute_auroc(matched_cnn, test_dl_local, device=device, dataset=args.dataset)
+
+        logger.info('>> Pre-Training Training auroc: {}'.format(train_auroc))
+        logger.info('>> Pre-Training Test auroc: {}'.format(test_auroc))
+
+    if mode != "block-wise":
+        if freezing_index < (len(weights) - 2):
+            retrain_epochs = args.retrain_epochs
+        else:
+            retrain_epochs = int(args.retrain_epochs*3)
+    else:
+        retrain_epochs = args.retrain_epochs
+
+    for epoch in range(retrain_epochs):
+        epoch_loss_collector = []
+        for batch_idx, (x, target) in enumerate(train_dl_local):
+            target = handle_uncertainty_labels(target)
+            target = handle_NaN_values(target) 
+            x, target = x.to(device), target.to(device)
+
+            optimizer_fine_tune.zero_grad()
+            x.requires_grad = True
+            target.requires_grad = False
+            # target = target.long()
+
+            out = matched_cnn(x)
+            loss = criterion_fine_tune(out, target) # loss criterion eventually needs to be adapted or sigmoid added
+            epoch_loss_collector.append(loss.item())
+
+            loss.backward()
+            optimizer_fine_tune.step()
+
+        #logging.debug('Epoch: %d Loss: %f L2 loss: %f' % (epoch, loss.item(), reg*l2_reg))
+        epoch_loss = sum(epoch_loss_collector) / len(epoch_loss_collector)
+        logger.info('Epoch: %d Epoch Avg Loss: %f' % (epoch, epoch_loss))
+
+    if not (args.dataset == "chexpert"):
+        train_acc = compute_accuracy(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
+        test_acc, conf_matrix = compute_accuracy(matched_cnn, test_dl_local, get_confusion_matrix=True, device=device, dataset=args.dataset)
+
+        logger.info('>> Training accuracy after local retrain: {}'.format(train_acc))
+        logger.info('>> Test accuracy after local retrain: {}'.format(test_acc))
+    else:
+        train_auroc = compute_auroc(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
+        test_auroc = compute_auroc(matched_cnn, test_dl_local, device=device, dataset=args.dataset)
+
+        logger.info('>> Training auroc after local retrain: {}'.format(train_auroc))
+        logger.info('>> Test auroc after local retrain: {}'.format(test_auroc))
+
+    return matched_cnn
 
 def local_retrain_fedavg(local_datasets, weights, args, device="cpu"):
     """
@@ -2879,7 +3276,7 @@ def BBP_MAP_not_layerwise_2(nets_list, model_meta_data, layer_type, net_dataidx_
     first_fc_index = None
     matched_weights = []
     for layer_index in range(1, n_layers):
-        layer_hungarian_weights, assignment, L_next = layer_wise_group_descent_2(
+        layer_hungarian_weights, assignment, L_next = layer_wise_group_descent_3_averaged(
              batch_weights=batch_weights, 
              layer_index=layer_index,
              sigma0_layers=sigma0, 
@@ -2928,12 +3325,12 @@ def BBP_MAP_not_layerwise_2(nets_list, model_meta_data, layer_type, net_dataidx_
 
     #avg_last_layer_weight = np.mean(last_layer_weights_collector, axis=0)
 
-    fc_weights = [avg_last_layer_weight[0:-1, :] for j in range(num_workers)]
-    fc_bias = [avg_last_layer_weight[-1, :] for j in range(num_workers)]
-    matched_weights.append(fc_weights)
-    matched_weights.append(fc_bias)
-    # matched_weights.append(avg_last_layer_weight[0:-1, :])
-    # matched_weights.append(avg_last_layer_weight[-1, :])
+    # fc_weights = [avg_last_layer_weight[0:-1, :] for j in range(num_workers)]
+    # fc_bias = [avg_last_layer_weight[-1, :] for j in range(num_workers)]
+    # matched_weights.append(fc_weights)
+    # matched_weights.append(fc_bias)
+    matched_weights.append(avg_last_layer_weight[0:-1, :])
+    matched_weights.append(avg_last_layer_weight[-1, :])
     return matched_weights, assignments_list
 
 
@@ -3310,12 +3707,105 @@ def fedma_comm_not_layerwise_2(batch_weights, model_meta_data, layer_type, net_d
         logger.info("Average AUROC score with matched weights on global test dataset: {}".format(overall_global_test_auroc))
         logger.info("===================================================================")
         batch_weights = copy.deepcopy(hungarian_weights)
+        save_weights(batch_weights, "FedMA_comm_not_layerwise_3_averaged_unmatched")
         del hungarian_weights
     adapted_weights = []
     for worker_index in range(args.n_nets):
-        new_weights = match_global_to_local_weights(batch_weights, assignments_list, worker_index, not_layerwise=True )
+        new_weights = match_global_to_local_weights_2(batch_weights, assignments_list, worker_index, not_layerwise=True )
         adapted_weights.append(new_weights)
-    return adapted_weights
+    return adapted_weights 
+
+def fedma_comm_not_layerwise_3(batch_weights, model_meta_data, layer_type, net_dataidx_map, 
+                            averaging_weights, args, 
+                            train_dl_global,
+                            test_dl_global,
+                            assignments_list,
+                            comm_round=2,
+                            device="cpu"):
+    '''
+    version 0.0.2
+    In this version we achieve layerwise matching with communication in a blockwise style
+    i.e. we unfreeze a block of layers (each 3 consecutive layers)---> retrain them ---> and rematch them
+    '''
+    n_layers = 242
+    num_workers = len(batch_weights)
+
+    matching_shapes = []
+    first_fc_index = None
+    gamma = 5.0
+    sigma = 1.0
+    sigma0 = 1.0
+
+    cls_freqs = traindata_cls_counts
+    n_classes = 10
+    batch_freqs = pdm_prepare_freq(cls_freqs, n_classes)
+    it=5
+
+    for cr in range(comm_round):
+        logger.info("Entering communication round: {} ...".format(cr))
+        retrained_nets = []
+        for worker_index in range(args.n_nets):
+            dataidxs = net_dataidx_map[worker_index]
+            train_dl_local, test_dl_local = get_dataloader(args.dataset, args_datadir, args.batch_size, 32, dataidxs)
+
+            # for the "squeezing" mode, we pass assignment list wrt this worker to the `local_retrain` function
+            # recons_local_net = reconstruct_local_net_2(batch_weights[worker_index], args, ori_assignments=assignments_list, worker_index=worker_index)
+            new_weights = match_global_to_local_weights_3(batch_weights, assignments_list, worker_index, not_layerwise=True )
+            retrained_cnn = local_retrain_3((train_dl_local,test_dl_local), new_weights, args,
+                                            mode="bottom-up", freezing_index=1000, ori_assignments=None, device=device)
+            retrained_nets.append(retrained_cnn)
+
+        # BBP_MAP step
+        hungarian_weights, assignments_list = BBP_MAP_not_layerwise_2(retrained_nets, model_meta_data, layer_type, net_dataidx_map, averaging_weights, args, device=device)
+
+        logger.info("After retraining and rematching for comm. round: {}, we measure the accuracy ...".format(cr))
+        overall_train_auroc = 0
+        overall_test_auroc = 0
+
+        train_auroc_list, test_auroc_list = compute_local_model_auroc_3(models,
+                                hungarian_weights,
+                                assignments_list,
+                                net_dataidx_map,
+                                args_datadir,
+                                n_classes,
+                                device=device,
+                                args=args)
+
+        for i in range(args.n_nets):
+            overall_train_auroc += train_auroc_list[i]
+            overall_test_auroc += test_auroc_list[i]
+
+        overall_train_auroc = overall_train_auroc / args.n_nets
+        overall_test_auroc = overall_test_auroc / args.n_nets
+
+        logger.info("Average auroc score with matched weights on local training dataset: {}".format(overall_train_auroc))
+        logger.info("Average auroc score with matched weights on local test dataset: {}".format(overall_test_auroc))
+        logger.info("===================================================================")
+        overall_global_test_auroc = 0
+
+        global_test_auroc_list = compute_local_model_auroc_global_dataset_3(models,
+                                hungarian_weights,
+                                assignments_list,
+                                test_dl_global,
+                                args_datadir,
+                                n_classes,
+                                device=device,
+                                args=args)
+
+        for i in range(args.n_nets):
+            overall_global_test_auroc += global_test_auroc_list[i]
+
+        overall_global_test_auroc = overall_global_test_auroc / args.n_nets
+
+        logger.info("Average AUROC score with matched weights on global test dataset: {}".format(overall_global_test_auroc))
+        logger.info("===================================================================")
+        batch_weights = copy.deepcopy(hungarian_weights)
+        del hungarian_weights
+    adapted_weights = []
+    for worker_index in range(args.n_nets):
+        new_weights = match_global_to_local_weights_3(batch_weights, assignments_list, worker_index, not_layerwise=True )
+        adapted_weights.append(new_weights)
+    return adapted_weights 
 
 if __name__ == "__main__":
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -3437,12 +3927,12 @@ if __name__ == "__main__":
 
     # this is for PFNM
     logger.info("Start BBP_MAP")
-    hungarian_weights, assignments_list = BBP_MAP_not_layerwise(nets_list, model_meta_data, layer_type, net_dataidx_map, averaging_weights, args, device=device)
+    hungarian_weights, assignments_list = BBP_MAP_not_layerwise_2(nets_list, model_meta_data, layer_type, net_dataidx_map, averaging_weights, args, device=device)
     #hungarian_weights = load_weights("FedMA_no_comm")
     #assignments_list = load_weights("FedMA_no_comm_assignments")
     logger.info("BBP_MAP finished")
-    save_weights(hungarian_weights, "FedMA_no_comm_not_layerwise")
-    save_weights(assignments_list, "FedMA_no_comm_assignments_not_layerwise")
+    save_weights(hungarian_weights, "FedMA_no_comm_not_layerwise_3_averaged")
+    save_weights(assignments_list, "FedMA_no_comm_assignments_not_layerwise_3_averaged")
     ## averaging models 
     ## we need to switch to real FedAvg implementation 
     ## FedAvg is originally proposed at: here: https://arxiv.org/abs/1602.05629
@@ -3463,7 +3953,7 @@ if __name__ == "__main__":
     for aw in averaged_weights:
         logger.info(aw.shape)
 
-    save_weights(averaged_weights, "FedAvg_no_comm_not_layerwise")
+    save_weights(averaged_weights, "FedAvg_no_comm__not_layerwise_3_averaged")
 
     models = nets_list
     # _ = compute_full_cnn_accuracy(models,
@@ -3477,7 +3967,7 @@ if __name__ == "__main__":
     overall_train_auroc = 0
     overall_test_auroc = 0
 
-    train_auroc_list, test_auroc_list = compute_local_model_auroc(models,
+    train_auroc_list, test_auroc_list = compute_local_model_auroc_3(models,
                             hungarian_weights,
                             assignments_list,
                             net_dataidx_map,
@@ -3498,7 +3988,7 @@ if __name__ == "__main__":
     logger.info("===================================================================")
     overall_global_test_auroc = 0
 
-    global_test_auroc_list = compute_local_model_auroc_global_dataset(models,
+    global_test_auroc_list = compute_local_model_auroc_global_dataset_3(models,
                             hungarian_weights,
                             assignments_list,
                             test_dl_global,
@@ -3567,11 +4057,11 @@ if __name__ == "__main__":
                             comm_round=args.comm_round,
                             device=device)
         logger.info("FedAvg with communication finished")
-        save_weights(global_weights_fedavg, "FedAvg_comm_not_layerwise")
+        save_weights(global_weights_fedavg, "FedAvg_comm_not_layerwise_3_averaged")
 
         comm_init_batch_weights = [copy.deepcopy(hungarian_weights) for _ in range(args.n_nets)]
         logger.info("Start FedMA with communication")
-        global_weights_fedma = fedma_comm_not_layerwise(comm_init_batch_weights,
+        global_weights_fedma = fedma_comm_not_layerwise_3(comm_init_batch_weights,
                                  model_meta_data, layer_type, net_dataidx_map,
                                  averaging_weights, args,
                                  train_dl_global,
@@ -3580,6 +4070,6 @@ if __name__ == "__main__":
                                  comm_round=args.comm_round,
                                  device=device)
         logger.info("FedMA with communication finished")
-        save_weights(global_weights_fedma, "FedMA_comm_not_layerwise")
+        save_weights(global_weights_fedma, "FedMA_comm_not_layerwise_3_averaged")
         # analyze(models_1 = retrained_nets_fedavg, global_weights_1 = global_weights_fedavg, 
         #         models_2 = retrained_nets_fedma, global_weights_2 = global_weights_fedma, args=args)
