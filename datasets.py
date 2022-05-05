@@ -1,5 +1,5 @@
 """
-This file needs to be changed so that the desired dataset is integrated
+Integrated CheXpert dataset
 """
 
 
@@ -21,6 +21,7 @@ import sys
 import logging
 import pandas as pd
 import cv2
+import subprocess
 from pathlib import Path
 
 
@@ -58,9 +59,21 @@ def default_loader(path):
         return pil_loader(path)
 
 class CheXpert_dataset(data.Dataset):
-
+    """
+    class for the CheXpert dataset
+    """
     def __init__(self, root, train=True, valid=False, transform=True, dataidxs=None, no_labels = False, local = False):
+        """
+        Constructor
 
+        : root: path to the data
+        : train: whether to create a training dataset
+        : valid: whether to create a validation dataset
+        : transform: whether to transform the data
+        : dataidxs: determines the data points that should be included in the dataset
+        : no_labels: whether to return the data labels
+        : local: whether to create a local dataset
+        """
         self.root = root
         self.train = train
         self.valid = valid
@@ -91,7 +104,9 @@ class CheXpert_dataset(data.Dataset):
                 "Pleural Other",
                 "Fracture",
                 "Support Devices"]
+        
         self.dataframe = pd.read_csv(file_name, usecols = columns_of_interest)
+        
 
         if not valid:# and dataidxs == None:
             train_ds, test_ds = train_test_split(self.dataframe, test_size=0.3, shuffle = False)
@@ -125,7 +140,11 @@ class CheXpert_dataset(data.Dataset):
         return self.dataframe.shape[0]
 
     def __getitem__(self, index):
+        """
+        Returns the image located at the transmitted index
 
+        : index: image index
+        """
         if self.no_labels:
             image = None
             patient = self.dataframe.iloc[index]["Path"]

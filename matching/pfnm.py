@@ -1,5 +1,6 @@
 """ hier sind noch einige Methoden enthalten, welche vom Namen her relevant klingen, aber nicht standardmäßig aufgerufen werden """
 
+from curses import keyname
 from model2 import densenet121Container
 from utils import densenet_index, densenet_index_2, densenet_index_to_layer_2, densenet_index_to_layer, densenet_index_3, densenet_index_to_layer_3
 from .utils import *
@@ -17,7 +18,14 @@ from lapsolver import solve_dense
 # mu0_cuda = torch.from_numpy(mu0).to('cuda:0')
 
 def row_param_cost(global_weights, weights_j_l, global_sigmas, sigma_inv_j):
+    """
+    computes the row parameter cost
 
+    : global_weights: global parameters
+    : weights_j_l: local parameters
+    : global_sigmas: global sigma values
+    : sigma_inv_j: local sigma values
+    """
     match_norms = ((weights_j_l + global_weights) ** 2 / (sigma_inv_j + global_sigmas)).sum(axis=1) - (
                 global_weights ** 2 / global_sigmas).sum(axis=1)
 
@@ -25,6 +33,14 @@ def row_param_cost(global_weights, weights_j_l, global_sigmas, sigma_inv_j):
 
 
 def row_param_cost_simplified(global_weights, weights_j_l, sij_p_gs, red_term):
+    """
+    computes the row parameter cost if some terms are already summarized
+
+    : global_weights: global parameters
+    : weights_j_l: local parameters
+    : global_sigmas: global sigma values
+    : sigma_inv_j: local sigma values
+    """
     match_norms = ((weights_j_l + global_weights) ** 2 / sij_p_gs).sum(axis=1) - red_term
     return match_norms
 
@@ -38,7 +54,19 @@ def row_param_cost_simplified(global_weights, weights_j_l, sij_p_gs, red_term):
 
 def compute_cost(global_weights, weights_j, global_sigmas, sigma_inv_j, prior_mean_norm, prior_inv_sigma,
                  popularity_counts, gamma, J):
+    """
+    computes the cost for computing the matching matrices
 
+    : global_weights: global parameters
+    : weights_j_l: local parameters
+    : global_sigmas: global sigma values
+    : sigma_inv_j: local sigma values
+    : prior_mean_norm: normalized mean_0
+    : prior_inv_sigma: sigma_0 value
+    : popularity_counts: number of occurences of a global parameter in the local models
+    : gamma: gamma value
+    : J: number of clients
+    """
     param_cost_start = time.time()
     Lj = weights_j.shape[0]
     counts = np.minimum(np.array(popularity_counts, dtype=np.float32), 10)
@@ -75,6 +103,19 @@ def compute_cost(global_weights, weights_j, global_sigmas, sigma_inv_j, prior_me
 
 def matching_upd_j(weights_j, global_weights, sigma_inv_j, global_sigmas, prior_mean_norm, prior_inv_sigma,
                    popularity_counts, gamma, J):
+    """
+    computes the global parameters and assignments of a specific layer
+
+    : weights_j: local parameters
+    : global_weights: global parameters
+    : global_sigmas: global sigma values
+    : sigma_inv_j: local sigma values
+    : prior_mean_norm: normalized mean_0
+    : prior_inv_sigma: sigma_0 value
+    : popularity_counts: number of occurences of a global parameter in the local models
+    : gamma: gamma value
+    : J: number of clients
+    """
 
     L = global_weights.shape[0]
 
@@ -112,6 +153,9 @@ def matching_upd_j(weights_j, global_weights, sigma_inv_j, global_sigmas, prior_
     return global_weights, global_sigmas, popularity_counts, assignment_j
 
 def patch_weights(w_j, L_next, assignment_j_c):
+    """
+    Aligns the weights given in w_j according to the assignments and the number of global parameters L_next
+    """
     if assignment_j_c is None:
         return w_j
     new_w_j = np.zeros((w_j.shape[0], L_next))
@@ -126,6 +170,17 @@ def block_patching(w_j, L_next, assignment_j_c, layer_index, model_meta_data,
     """
     In CNN, weights patching needs to be handled block-wisely
     We handle all conv layers and the first fc layer connected with the output of conv layers here
+    Used for approaches 1 and 2
+
+    : w_j: local parameters
+    : L_next: number of global parameters in a specific layer
+    : assignment_j_c: assignments of global to local parameters
+    : layer_index: layer index
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : matching_shapes: dimension of the matched_Weights
+    : layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight or in short form fc, norm or conv
+    : dataset: dataset to be used
+    : network_name: NN architecture
     """
     # logger.info('--'*15)
     # logger.info("ori w_j shape: {}".format(w_j.shape))
@@ -279,6 +334,17 @@ def block_patching_2(w_j, L_next, assignment_j_c, layer_index, model_meta_data,
     """
     In CNN, weights patching needs to be handled block-wisely
     We handle all conv layers and the first fc layer connected with the output of conv layers here
+    Used for approaches 3 and 4
+    
+    : w_j: local parameters
+    : L_next: number of global parameters in a specific layer
+    : assignment_j_c: assignments of global to local parameters
+    : layer_index: layer index
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : matching_shapes: dimension of the matched_Weights
+    : layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight or in short form fc, norm or conv
+    : dataset: dataset to be used
+    : network_name: NN architecture
     """
     # logger.info('--'*15)
     # logger.info("ori w_j shape: {}".format(w_j.shape))
@@ -359,6 +425,17 @@ def block_patching_3(weights, matching_weights, L_next, assignment_j_c, layer_in
     """
     In CNN, weights patching needs to be handled block-wisely
     We handle all conv layers and the first fc layer connected with the output of conv layers here
+    Used for approaches 5 and 6
+    
+    : w_j: local parameters
+    : L_next: number of global parameters in a specific layer
+    : assignment_j_c: assignments of global to local parameters
+    : layer_index: layer index
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : matching_shapes: dimension of the matched_Weights
+    : layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight or in short form fc, norm or conv
+    : dataset: dataset to be used
+    : network_name: NN architecture
     """
     # logger.info('--'*15)
     # logger.info("ori w_j shape: {}".format(w_j.shape))
@@ -480,6 +557,9 @@ def block_patching_3(weights, matching_weights, L_next, assignment_j_c, layer_in
     return new_w_j_1
 
 def process_softmax_bias(batch_weights, last_layer_const, sigma, sigma0):
+    """
+    computes the bias and sigma value of the second last layer
+    """
     J = len(batch_weights)
     sigma_bias = sigma
     sigma0_bias = sigma0
@@ -492,6 +572,17 @@ def process_softmax_bias(batch_weights, last_layer_const, sigma, sigma0):
 
 
 def match_layer(weights_bias, sigma_inv_layer, mean_prior, sigma_inv_prior, gamma, it):
+    """
+    performs matching of a specific layer
+
+    : weights_bias: local parameters to be macthed
+    : sigma_inv_layer: local sigma values
+    : mean_prior: mean_0
+    : sigma_inv_prior: sigma_0 value
+    : gamma: gamma value
+    : it: number of iterations
+    """
+
     J = len(weights_bias)
 
     group_order = sorted(range(J), key=lambda x: -weights_bias[x].shape[0])
@@ -566,9 +657,7 @@ def layer_wise_group_descent_pfnm(batch_weights, layer_index, batch_frequencies,
                                 args):
     """
     We implement a layer-wise matching here:
-    """
-    """
-    We implement a layer-wise matching here:
+    this version is not used since it is for oneshot_matching
     """
     if type(sigma_layers) is not list:
         sigma_layers = (n_layers - 1) * [sigma_layers]
@@ -724,6 +813,20 @@ def layer_wise_group_descent(batch_weights, layer_index, batch_frequencies, sigm
                                 args):
     """
     We implement a layer-wise matching here:
+    Used for approach 1 
+
+    : batch_weights: local weights
+    : layer_index: lyer index 
+    : batch_frequencies: class frequencies
+    : sigma_layers: sigma values
+    : sigma0_layers: sigma0 values
+    : gamma_layers: gamma values
+    : it: number of iterations
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : model_layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : n_layers: number of layers
+    : matching_shapes: dimension of the matched weights of the prior layers
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
     """
     if type(sigma_layers) is not list:
         sigma_layers = (n_layers - 1) * [sigma_layers]
@@ -1131,6 +1234,20 @@ def layer_wise_group_descent_all_param(batch_weights, layer_index, batch_frequen
                                 args):
     """
     We implement a layer-wise matching here:
+    Used for approach 2 
+
+    : batch_weights: local weights
+    : layer_index: lyer index 
+    : batch_frequencies: class frequencies
+    : sigma_layers: sigma values
+    : sigma0_layers: sigma0 values
+    : gamma_layers: gamma values
+    : it: number of iterations
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : model_layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : n_layers: number of layers
+    : matching_shapes: dimension of the matched weights of the prior layers
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
     """
     if type(sigma_layers) is not list:
         sigma_layers = (n_layers - 1) * [sigma_layers]
@@ -1189,14 +1306,34 @@ def layer_wise_group_descent_all_param(batch_weights, layer_index, batch_frequen
             first_fc_identifier = (('fc' in layer_type or 'classifier' in layer_type) and ('conv' in prev_layer_type or 'features' in layer_type))
 
             # we switch to ignore the last layer here:
-            
-            weights_bias = [np.hstack((batch_weights[j][this_index].reshape(-1, 1), 
-                                            batch_weights[j][this_index + 1].reshape(-1, 1))) for j in range(J)]
+            if 'conv' in layer_type:
+                weights_bias = [batch_weights[j][this_index] for j in range(J)]
 
-            sigma_inv_prior = np.array([1 / sigma0_bias] + (weights_bias[0].shape[1] - 1) * [1 / sigma0])
-            mean_prior = np.array([mu0_bias] + (weights_bias[0].shape[1] - 1) * [mu0])
-            
-            sigma_inv_layer = [np.array([1 / sigma_bias] + (weights_bias[j].shape[1] - 1) * [1 / sigma]) for j in range(J)]
+                sigma_inv_prior = np.array((weights_bias[0].shape[1]) * [1 / sigma0])
+                mean_prior = np.array((weights_bias[0].shape[1]) * [mu0])
+                sigma_inv_layer = [np.array((weights_bias[j].shape[1]) * [1 / sigma]) for j in range(J)]
+            elif 'norm' in layer_type:
+                # weights_bias = [np.hstack((batch_weights[j][this_index].reshape(-1, 1), 
+                #                             batch_weights[j][this_index + 1].reshape(-1, 1), batch_weights[j][this_index + 2].reshape(-1, 1),
+                #                             batch_weights[j][this_index + 3].reshape(-1, 1), batch_weights[j][this_index + 4])) for j in range(J)] 
+                weights_bias = [np.hstack((batch_weights[j][this_index].reshape(-1, 1), 
+                                            batch_weights[j][this_index + 1].reshape(-1, 1), batch_weights[j][this_index + 2].reshape(-1, 1),
+                                            batch_weights[j][this_index + 3].reshape(-1, 1))) for j in range(J)]            
+
+                # sigma_inv_prior = np.array([1 / sigma0_bias]*4 + (weights_bias[0].shape[1] - 4) * [1 / sigma0])
+                # mean_prior = np.array([mu0_bias]*4 + (weights_bias[0].shape[1] - 4) * [mu0])
+                # sigma_inv_layer = [np.array([1 / sigma_bias]*4 + (weights_bias[j].shape[1] - 4) * [1 / sigma]) for j in range(J)]
+                sigma_inv_prior = np.array([1 / sigma0_bias]*3 + (weights_bias[0].shape[1] - 3) * [1 / sigma0])
+                mean_prior = np.array([mu0_bias]*3 + (weights_bias[0].shape[1] - 3) * [mu0])
+                sigma_inv_layer = [np.array([1 / sigma_bias]*3 + (weights_bias[j].shape[1] - 3) * [1 / sigma]) for j in range(J)]
+            elif "fc" in layer_type or "classifier" in layer_type:
+                weights_bias = [np.hstack((batch_weights[j][this_index].reshape(-1, 1), 
+                                                batch_weights[j][this_index + 1].reshape(-1, 1))) for j in range(J)]
+
+                sigma_inv_prior = np.array([1 / sigma0_bias] + (weights_bias[0].shape[1] - 1) * [1 / sigma0])
+                mean_prior = np.array([mu0_bias] + (weights_bias[0].shape[1] - 1) * [mu0])
+                
+                sigma_inv_layer = [np.array([1 / sigma_bias] + (weights_bias[j].shape[1] - 1) * [1 / sigma]) for j in range(J)]
 
         elif (layer_index > 1 and layer_index < (n_layers - 1)):
             
@@ -1473,6 +1610,20 @@ def layer_wise_group_descent_2(batch_weights, layer_index, batch_frequencies, si
                                 args):
     """
     We implement a layer-wise matching here:
+    Used for approach 3 
+
+    : batch_weights: local weights
+    : layer_index: lyer index 
+    : batch_frequencies: class frequencies
+    : sigma_layers: sigma values
+    : sigma0_layers: sigma0 values
+    : gamma_layers: gamma values
+    : it: number of iterations
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : model_layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : n_layers: number of layers
+    : matching_shapes: dimension of the matched weights of the prior layers
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
     """
     if type(sigma_layers) is not list:
         sigma_layers = (n_layers - 1) * [sigma_layers]
@@ -1921,6 +2072,20 @@ def layer_wise_group_descent_2_all_param(batch_weights, layer_index, batch_frequ
                                 args):
     """
     We implement a layer-wise matching here:
+    Used for approach 4 
+
+    : batch_weights: local weights
+    : layer_index: lyer index 
+    : batch_frequencies: class frequencies
+    : sigma_layers: sigma values
+    : sigma0_layers: sigma0 values
+    : gamma_layers: gamma values
+    : it: number of iterations
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : model_layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : n_layers: number of layers
+    : matching_shapes: dimension of the matched weights of the prior layers
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
     """
     if type(sigma_layers) is not list:
         sigma_layers = (n_layers - 1) * [sigma_layers]
@@ -1991,14 +2156,13 @@ def layer_wise_group_descent_2_all_param(batch_weights, layer_index, batch_frequ
 
             # we switch to ignore the last layer here:
             
-            weights_bias = [np.hstack((batch_weights[j][this_index].reshape(-1, 1), 
-                                            batch_weights[j][this_index + 1].reshape(-1, 1),
-                                            batch_weights[j][this_index + 5].reshape(-1, 1))) for j in range(J)]
+            weights_bias = [np.hstack((batch_weights[j][this_index].reshape(-1, 1), batch_weights[j][this_index + 1].reshape(-1, 1), 
+            batch_weights[j][this_index + 2].reshape(-1, 1), batch_weights[j][this_index + 3].reshape(-1, 1), 
+            batch_weights[j][this_index + 5])) for j in range(J)]         
 
-            sigma_inv_prior = np.array([1 / sigma0_bias]*2 + (weights_bias[0].shape[1] - 2) * [1 / sigma0])
-            mean_prior = np.array([mu0_bias]*2 + (weights_bias[0].shape[1] - 2) * [mu0])
-            
-            sigma_inv_layer = [np.array([1 / sigma_bias]*2 + (weights_bias[j].shape[1] - 2) * [1 / sigma]) for j in range(J)]
+            sigma_inv_prior = np.array([1 / sigma0_bias]*4 + (weights_bias[0].shape[1] - 4) * [1 / sigma0])
+            mean_prior = np.array([mu0_bias]*4 + (weights_bias[0].shape[1] - 4) * [mu0])
+            sigma_inv_layer = [np.array([1 / sigma_bias]*4 + (weights_bias[j].shape[1] - 4) * [1 / sigma]) for j in range(J)]
 
         elif (layer_index > 1 and layer_index < (n_layers - 1)):
             
@@ -2278,6 +2442,20 @@ def layer_wise_group_descent_3(batch_weights, layer_index, batch_frequencies, si
                                 args):
     """
     We implement a layer-wise matching here:
+    Used for approach 5 
+
+    : batch_weights: local weights
+    : layer_index: lyer index 
+    : batch_frequencies: class frequencies
+    : sigma_layers: sigma values
+    : sigma0_layers: sigma0 values
+    : gamma_layers: gamma values
+    : it: number of iterations
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : model_layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : n_layers: number of layers
+    : matching_shapes: dimension of the matched weights of the prior layers
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
     """
     if type(sigma_layers) is not list:
         sigma_layers = (n_layers - 1) * [sigma_layers]
@@ -2705,6 +2883,20 @@ def layer_wise_group_descent_3_averaged(batch_weights, layer_index, batch_freque
                                 args):
     """
     We implement a layer-wise matching here:
+    Used for approach 6 
+
+    : batch_weights: local weights
+    : layer_index: lyer index 
+    : batch_frequencies: class frequencies
+    : sigma_layers: sigma values
+    : sigma0_layers: sigma0 values
+    : gamma_layers: gamma values
+    : it: number of iterations
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : model_layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : n_layers: number of layers
+    : matching_shapes: dimension of the matched weights of the prior layers
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
     """
     if type(sigma_layers) is not list:
         sigma_layers = (n_layers - 1) * [sigma_layers]
@@ -2756,7 +2948,7 @@ def layer_wise_group_descent_3_averaged(batch_weights, layer_index, batch_freque
 
         elif layer_index == (n_layers - 1) and n_layers > 2:
             # handle the last batch normalisation layer
-            # total of 320 layers, so this will be the 319th layer
+            # total of 242 layers, so this will be the 241th layer
             this_index = densenet_index_3(layer_index)
             layer_type = model_layer_type[this_index]
             prev_layer_type = model_layer_type[this_index - 1]
@@ -3125,7 +3317,20 @@ def layer_wise_group_descent_comm(batch_weights, layer_index, batch_frequencies,
                                 matching_shapes,
                                 args):
     """
-    We implement a layer-wise matching here:
+    We implement a layer-wise matching here for the communication scenario: version 1
+
+    : batch_weights: local weights
+    : layer_index: lyer index 
+    : batch_frequencies: class frequencies
+    : sigma_layers: sigma values
+    : sigma0_layers: sigma0 values
+    : gamma_layers: gamma values
+    : it: number of iterations
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : model_layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : n_layers: number of layers
+    : matching_shapes: dimension of the matched weights of the prior layers
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
     """
     if type(sigma_layers) is not list:
         sigma_layers = (n_layers - 1) * [sigma_layers]
@@ -3384,7 +3589,20 @@ def layer_wise_group_descent_comm_v2(batch_weights, layer_index, batch_frequenci
                                 matching_shapes,
                                 args):
     """
-    We implement a layer-wise matching here:
+    We implement a layer-wise matching here: version 2 
+
+    : batch_weights: local weights
+    : layer_index: lyer index 
+    : batch_frequencies: class frequencies
+    : sigma_layers: sigma values
+    : sigma0_layers: sigma0 values
+    : gamma_layers: gamma values
+    : it: number of iterations
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : model_layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : n_layers: number of layers
+    : matching_shapes: dimension of the matched weights of the prior layers
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
     """
     if type(sigma_layers) is not list:
         sigma_layers = (n_layers - 1) * [sigma_layers]
@@ -3589,7 +3807,21 @@ def layer_wise_group_descent_comm_v3(batch_weights, layer_index, batch_frequenci
                                 matching_shapes,
                                 args):
     """
-    We implement a layer-wise matching here:
+    We implement a layer-wise matching here: version 3
+    Used for approach 1 
+
+    : batch_weights: local weights
+    : layer_index: lyer index 
+    : batch_frequencies: class frequencies
+    : sigma_layers: sigma values
+    : sigma0_layers: sigma0 values
+    : gamma_layers: gamma values
+    : it: number of iterations
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : model_layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : n_layers: number of layers
+    : matching_shapes: dimension of the matched weights of the prior layers
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
     """
     if type(sigma_layers) is not list:
         sigma_layers = (n_layers - 1) * [sigma_layers]
@@ -3743,7 +3975,7 @@ def fedma_whole(batch_weights, batch_frequencies, sigma_layers,
                                 dataset,
                                 network_name="lenet"):
     """
-    We implement a bottom-up version of matching here:
+    We implement a bottom-up version of matching here: not used in our simplified version of FedMA
     """
     n_layers = int(len(batch_weights[0]) / 2)
 

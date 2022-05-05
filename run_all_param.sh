@@ -8,7 +8,10 @@ python main_all_param.py --model=densenet121 \
 --retrain_epochs=2 \
 --n_nets=16 \
 --partition=homo \
---comm_type=fedma_fedavg \
---comm_round=3 \
+--comm_type=test \
+--comm_round=1 \
 --oneshot_matching= \
---retrain=
+--retrain=;
+# rsync -zvh trained_weightsPre_FedMA_comm_not_layerwise_all_param /pfs/work7/workspace/scratch/sq8430-data_workspace/;
+# rsync -zvh matched_weights_not_layerwise_all_param /pfs/work7/workspace/scratch/sq8430-data_workspace/;
+# rsync -zvh trained_weightsFedMA_comm_not_layerwise_all_param /pfs/work7/workspace/scratch/sq8430-data_workspace/;

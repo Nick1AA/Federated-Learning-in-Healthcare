@@ -11,7 +11,17 @@ logging.basicConfig(format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(messa
 logger = logging.getLogger("matching_performance")
 
 def compute_model_averaging_accuracy(models, weights, train_dl, test_dl, n_classes, args, device = "cpu"):
-    """An variant of fedaveraging"""
+    """
+    Used for FedAvg, calculates the AUROC-score of a model with the transmitted weights
+
+    : models: NN models to analyze (not used)
+    : weights: weights to be analyzed
+    : train_dl: training dataloader
+    : test_dl: test dataloader
+    : n_classes: number of classes
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : device: Device on which the computation is performed (gpu or cpu)
+    """
     if args.model == "lenet":
         avg_cnn = LeNet()
     elif args.model == "vgg":
@@ -81,11 +91,23 @@ def compute_model_averaging_accuracy(models, weights, train_dl, test_dl, n_class
             
         logger.info("Accuracy for Fed Averaging correct: {}, total: {}".format(correct, total))
     else:
-        auroc = compute_accuracy(avg_cnn, test_dl, device, dataset = args.dataset)
+        auroc = compute_auroc(avg_cnn, test_dl, device=device, dataset = args.dataset)
         logger.info("AUROC score for Fed Averaging: {}".format(auroc))
 
 def compute_local_model_auroc(models, hungarian_weights, assignments, net_dataidx_map, args_datadir, n_classes, args, device = "cpu"):
-    
+    """
+    Used for FedMA, calculates the AUROC-score of a model with the transmitted weights
+    Used for approach 1 and 2
+
+    : models: NN models to analyze (not used)
+    : hungarian_weights: FedMA weights to be analyzed
+    : assignments: Contains the assignments of the global to the local parameters for all clients
+    : net_dataidx_map: List determining which data point belongs to which client
+    : args_datadir: data directory 
+    : n_classes: number of classes
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : device: Device on which the computation is performed (gpu or cpu)
+    """
     
     new_weights = []
     for i in range(args.n_nets):
@@ -143,13 +165,27 @@ def compute_local_model_auroc(models, hungarian_weights, assignments, net_dataid
     return train_auroc_list, test_auroc_list
 
 def compute_local_model_auroc_global_dataset(models, hungarian_weights, assignments, test_data, args_datadir, n_classes, args, device = "cpu"):
-    """An variant of fedaveraging"""
+    
+    """
+    Used for FedMA, calculates the AUROC-score of a model with the transmitted weights on the global test dataset
+    Used for approach 1 and 2
+
+    : models: NN models to analyze (not used)
+    : hungarian_weights: FedMA weights to be analyzed
+    : assignments: Contains the assignments of the global to the local parameters for all clients
+    : test_data: Dataset which is used to calculate the AUROC-score
+    : args_datadir: data directory 
+    : n_classes: number of classes
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : device: Device on which the computation is performed (gpu or cpu)
+    """
+
     old_weights = pdm_prepare_full_weights_cnn(models, device)
     new_weights = []
     for i in range(args.n_nets):
-        logger.info("Analyzing AUROC score of local model {}".format(i))
-        test_auroc = compute_auroc(models[i], test_data, device, dataset = args.dataset)
-        logger.info("AUROC score with local weights on global test dataset: {}".format(test_auroc))
+        # logger.info("Analyzing AUROC score of local model {}".format(i))
+        # test_auroc = compute_auroc(models[i], test_data, device, dataset = args.dataset)
+        # logger.info("AUROC score with local weights on global test dataset: {}".format(test_auroc))
 
         if len(hungarian_weights[0]) == args.n_nets:
             new_local_weights = match_global_to_local_weights(hungarian_weights, assignments, i, not_layerwise = True)
@@ -191,7 +227,19 @@ def compute_local_model_auroc_global_dataset(models, hungarian_weights, assignme
     return test_auroc_list
 
 def compute_local_model_auroc_2(models, hungarian_weights, assignments, net_dataidx_map, args_datadir, n_classes, args, device = "cpu"):
-    """An variant of fedaveraging"""
+    """
+    Used for FedMA, calculates the AUROC-score of a model with the transmitted weights
+    Used for approach 3 and 4
+
+    : models: NN models to analyze (not used)
+    : hungarian_weights: FedMA weights to be analyzed
+    : assignments: Contains the assignments of the global to the local parameters for all clients
+    : net_dataidx_map: List determining which data point belongs to which client
+    : args_datadir: data directory 
+    : n_classes: number of classes
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : device: Device on which the computation is performed (gpu or cpu)
+    """
     
     new_weights = []
     for i in range(args.n_nets):
@@ -249,13 +297,26 @@ def compute_local_model_auroc_2(models, hungarian_weights, assignments, net_data
     return train_auroc_list, test_auroc_list
 
 def compute_local_model_auroc_global_dataset_2(models, hungarian_weights, assignments, test_data, args_datadir, n_classes, args, device = "cpu"):
-    """An variant of fedaveraging"""
+    """
+    Used for FedMA, calculates the AUROC-score of a model with the transmitted weights on the global test dataset
+    Used for approach 3 and 4
+
+    : models: NN models to analyze (not used)
+    : hungarian_weights: FedMA weights to be analyzed
+    : assignments: Contains the assignments of the global to the local parameters for all clients
+    : test_data: Dataset which is used to calculate the AUROC-score
+    : args_datadir: data directory 
+    : n_classes: number of classes
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : device: Device on which the computation is performed (gpu or cpu)
+    """
+
     old_weights = pdm_prepare_full_weights_cnn(models, device)
     new_weights = []
     for i in range(args.n_nets):
-        logger.info("Analyzing AUROC score of local model {}".format(i))
-        test_auroc = compute_auroc(models[i], test_data, device, dataset = args.dataset)
-        logger.info("AUROC score with local weights on global test dataset: {}".format(test_auroc))
+        # logger.info("Analyzing AUROC score of local model {}".format(i))
+        # test_auroc = compute_auroc(models[i], test_data, device, dataset = args.dataset)
+        # logger.info("AUROC score with local weights on global test dataset: {}".format(test_auroc))
 
         if len(hungarian_weights[0]) == args.n_nets:
             new_local_weights = match_global_to_local_weights_2(hungarian_weights, assignments, i, not_layerwise = True)
@@ -297,7 +358,19 @@ def compute_local_model_auroc_global_dataset_2(models, hungarian_weights, assign
     return test_auroc_list
 
 def compute_local_model_auroc_3(models, hungarian_weights, assignments, net_dataidx_map, args_datadir, n_classes, args, device = "cpu"):
-    """An variant of fedaveraging"""
+    """
+    Used for FedMA, calculates the AUROC-score of a model with the transmitted weights
+    Used for approach 5 and 6
+
+    : models: NN models to analyze (not used)
+    : hungarian_weights: FedMA weights to be analyzed
+    : assignments: Contains the assignments of the global to the local parameters for all clients
+    : net_dataidx_map: List determining which data point belongs to which client
+    : args_datadir: data directory 
+    : n_classes: number of classes
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : device: Device on which the computation is performed (gpu or cpu)
+    """
     
     new_weights = []
     for i in range(args.n_nets):
@@ -355,13 +428,25 @@ def compute_local_model_auroc_3(models, hungarian_weights, assignments, net_data
     return train_auroc_list, test_auroc_list
 
 def compute_local_model_auroc_global_dataset_3(models, hungarian_weights, assignments, test_data, args_datadir, n_classes, args, device = "cpu"):
-    """An variant of fedaveraging"""
+    """
+    Used for FedMA, calculates the AUROC-score of a model with the transmitted weights on the global test dataset
+    Used for approach 5 and 6
+
+    : models: NN models to analyze (not used)
+    : hungarian_weights: FedMA weights to be analyzed
+    : assignments: Contains the assignments of the global to the local parameters for all clients
+    : test_data: Dataset which is used to calculate the AUROC-score
+    : args_datadir: data directory 
+    : n_classes: number of classes
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : device: Device on which the computation is performed (gpu or cpu)
+    """
     old_weights = pdm_prepare_full_weights_cnn(models, device)
     new_weights = []
     for i in range(args.n_nets):
-        logger.info("Analyzing AUROC score of local model {}".format(i))
-        test_auroc = compute_auroc(models[i], test_data, device, dataset = args.dataset)
-        logger.info("AUROC score with local weights on global test dataset: {}".format(test_auroc))
+        # logger.info("Analyzing AUROC score of local model {}".format(i))
+        # test_auroc = compute_auroc(models[i], test_data, device, dataset = args.dataset)
+        # logger.info("AUROC score with local weights on global test dataset: {}".format(test_auroc))
 
         if len(hungarian_weights[0]) == args.n_nets:
             new_local_weights = match_global_to_local_weights_3(hungarian_weights, assignments, i, not_layerwise = True)
@@ -403,7 +488,17 @@ def compute_local_model_auroc_global_dataset_3(models, hungarian_weights, assign
     return test_auroc_list
 
 def compute_full_cnn_accuracy(models, weights, train_dl, test_dl, n_classes, device, args):
-    """Note that we only handle the FC weights for now"""
+    """
+    Used for FedMA, calculates the AUROC-score of a model with the transmitted weights
+
+    : models: NN models to analyze (not used)
+    : weights: weights to be analyzed
+    : train_dl: training dataloader
+    : test_dl: test dataloader
+    : n_classes: number of classes
+    : device: Device on which the computation is performed (gpu or cpu)
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    """
     # we need to figure out the FC dims first
 
     #LeNetContainer
@@ -449,12 +544,13 @@ def compute_full_cnn_accuracy(models, weights, train_dl, test_dl, n_classes, dev
                                         output_dim=10)
     elif args.model == "densenet121":
         num_filters = []
-        logging.info("These are the hungarian weights")
-        logging.info(weights)
+        # logging.info("These are the weights")
+        # logging.info(weights)
         # densenet121 hat insgesamt 242 conv oder norm Schichten inkl. eine classifier Schicht
-        for i in range (len(weights)):
-            num_filters.append(np.array(weights[densenet_index(i)]).shape[0])
-        matched_cnn = densenet121Container(num_filters = num_filters, layer_index = 300)
+        # for i in range(242):
+        #     num_filters.append(np.array(weights[densenet_index(i)]).shape[0])
+        # matched_cnn = densenet121Container(num_filters = num_filters, layer_index = 300)
+        matched_cnn = densenet121()
     elif args.model == "moderate-cnn":
         #[(35, 27), (35,), (68, 315), (68,), (132, 612), (132,), (132, 1188), (132,), 
         #(260, 1188), (260,), (260, 2340), (260,), 
@@ -485,13 +581,15 @@ def compute_full_cnn_accuracy(models, weights, train_dl, test_dl, n_classes, dev
         #print("&"*30)
         #print("Key: {}, Weight Shape: {}, Matched weight shape: {}".format(key_name, param.size(), weights[param_idx].shape))
         #print("&"*30)
+        if "num_batches_tracked" in key_name:
+            continue
         if "conv" in key_name:
             if "weight" in key_name:
                 temp_dict = {key_name: torch.from_numpy(weights[param_idx].reshape(param.size()))}
             elif "bias" in key_name:
                 temp_dict = {key_name: torch.from_numpy(weights[param_idx])}
         elif "norm" in key_name:
-            temp_dict = {key_name: torch.from_numpy(weights[param_idx])}
+            temp_dict = {key_name: torch.from_numpy(weights[param_idx].reshape(param.size()))}
         elif "fc" in key_name or "classifier" in key_name:
             if "weight" in key_name:
                 temp_dict = {key_name: torch.from_numpy(weights[param_idx].T)}
@@ -529,5 +627,5 @@ def compute_full_cnn_accuracy(models, weights, train_dl, test_dl, n_classes, dev
             
         logger.info("Accuracy for Neural Matching correct: {}, total: {}".format(correct, total))
     else:
-        auroc = compute_accuracy(matched_cnn, test_dl, device, dataset = args.dataset)
+        auroc = compute_auroc(matched_cnn, test_dl, device, dataset = args.dataset)
         logger.info("auroc score for Neural Matching: {}".format(auroc))

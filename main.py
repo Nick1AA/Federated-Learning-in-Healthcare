@@ -10,13 +10,13 @@ from model2 import densenet121Container, densenet121
 from utils import *
 from vgg import matched_vgg11
 from matching.utils2 import densenet121Flex
-from analysis import analyze
 import pickle
 import copy
 import argparse
 from torch import optim
 from distutils.dir_util import copy_tree
 import logging
+import subprocess
 
 from matching.pfnm import layer_wise_group_descent, layer_wise_group_descent_2, layer_wise_group_descent_3, layer_wise_group_descent_all_param, layer_wise_group_descent_2_all_param
 from matching.pfnm import block_patching, patch_weights, block_patching_2, block_patching_3
@@ -29,7 +29,7 @@ logger = logging.getLogger("main")
 
 args_logdir = "./logs/"
 #args_dataset = "cifar10"
-# args_datadir = "/scratch/CheXpert-v1.0-small/"
+# args_datadir = "./CheXpert-v1.0-small/"
 args_datadir = "./data/CheXpert-v1.0-small/"
 args_init_seed = 0
 args_net_config = [3072, 100, 14]
@@ -97,15 +97,45 @@ def add_fit_args(parser):
     return args
 
 def trans_next_conv_layer_forward(layer_weight, next_layer_shape):
+
+    """
+    Reshapes weight 
+
+    : layer_weight: weights of a specific layer
+    : next_layer_shape: Shape of the following layer
+    """
+
     reshaped = layer_weight.reshape(next_layer_shape).transpose((1, 0, 2, 3)).reshape((next_layer_shape[1], -1))
     return reshaped
 
 def trans_next_conv_layer_backward(layer_weight, next_layer_shape):
+
+    """
+    Reshapes weight backward
+
+    : layer_weight: weights of a specific layer
+    : next_layer_shape: Shape of the following layer
+    """
+
     reconstructed_next_layer_shape = (next_layer_shape[1], next_layer_shape[0], next_layer_shape[2], next_layer_shape[3])
     reshaped = layer_weight.reshape(reconstructed_next_layer_shape).transpose(1, 0, 2, 3).reshape(next_layer_shape[0], -1)
     return reshaped
 
 def train_net(net_id, net, train_dataloader, test_dataloader, epochs, lr, args, device="cpu"):
+
+    """
+    Trains the transmitted network using the training dataloader and the other parameters
+
+    : net_id: Client/local model ID
+    : net: local model
+    : train_dataloader: training dataloader
+    : test_dataloader: test dataloader
+    : epochs: Number of training epochs
+    : lr: learning rate
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : device: device on which the computation is done (cpu or gpu)
+    """
+
     logger.info('Training network %s' % str(net_id))
     logger.info('n_training: %d' % len(train_dataloader.dataset))
     logger.info('n_test: %d' % len(test_dataloader.dataset))
@@ -185,6 +215,16 @@ def train_net(net_id, net, train_dataloader, test_dataloader, epochs, lr, args, 
 
 
 def local_train(nets, args, net_dataidx_map, device="cpu"):
+
+    """
+    Function to train the local models with the data defined by the net_dataidx_map
+
+    : nets: List of local models
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : net_dataidx_map: List determining which data point belongs to which client
+    : device: device on which the computation is done (cpu or gpu)
+    """
+
     # save local dataset
     local_datasets = []
     nets_list = []
@@ -220,7 +260,15 @@ def local_train(nets, args, net_dataidx_map, device="cpu"):
 
 def local_retrain_dummy(local_datasets, weights, args, mode="bottom-up", freezing_index=0, ori_assignments=None, device="cpu"):
     """
-    FOR FPNM
+    FOR FPNM, used in one-shot matching - not needed in our analysis
+
+    : local_datasets: Tuple containing local training and local test dataset
+    : weights: parameters that are to be used in the new local models
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : mode: Retrain mode
+    : freezing_index: layer index up until which the parameters are not adapted during training / fixed
+    : ori_assignments: List of the assignments of the global to the local model parameters
+    : device: device on which the computation is done (cpu or gpu)
     """
     if args.model == "lenet":
         num_filters = [weights[0].shape[0], weights[2].shape[0]]
@@ -500,6 +548,18 @@ def local_retrain_dummy(local_datasets, weights, args, mode="bottom-up", freezin
     return matched_cnn
 
 def adapt_densenet_weights(matched_cnn, weights , layer_index ):
+
+    """
+    New function used to format the weights so that they can be used in the original FedMA
+    Therefore a layer_index is defined which indicates the first layer that needs to be formatted
+    Makes sure that the weights fit the required dimension of the DenseNet121 model
+    Enters the computed weights (param weights) in the first entries of the correctly formatted weights
+
+    : matched_cnn: DenseNet121 to which the weights need to be adapted
+    : weights: computed weights
+    : layer_index: Indicates up to which index the weights are in the correct format - all following layers need to be formatted
+    """
+
     new_weights = weights
     for param_idx, (key_name, param) in enumerate(matched_cnn.state_dict().items()):
         if "num_batches_tracked" in key_name:
@@ -521,9 +581,16 @@ def adapt_densenet_weights(matched_cnn, weights , layer_index ):
 
 def local_retrain(local_datasets, weights, args, mode="bottom-up", freezing_index=0, ori_assignments=None, device="cpu"):
     """
-    freezing_index :: starting from which layer we update the model weights,
-                      i.e. freezing_index = 0 means we train the whole network normally
-                           freezing_index = len(model) means we freez the entire network
+    Old adapted function to construct the local models with their new parameters from FedMA and retrain them 
+    Used for the approaches that match the batch normalization layers on their own (here approaches 1, 2)
+
+    : local_datasets: Tuple containing local training and local test dataset
+    : weights: parameters that are to be used in the new local models
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : mode: Retrain mode
+    : freezing_index: layer index up until which the parameters are not adapted during training / fixed
+    : ori_assignments: List of the assignments of the global to the local model parameters
+    : device: device on which the computation is done (cpu or gpu)
     """
     if args.model == "lenet":
         num_filters = [weights[0].shape[0], weights[2].shape[0]]
@@ -575,9 +642,9 @@ def local_retrain(local_datasets, weights, args, mode="bottom-up", freezing_inde
             num_filters = []
         # densenet121 hat insgesamt 242 conv oder norm Schichten inkl. eine classifier Schicht
             # matched_shapes = [w.shape for w in weights]
-            logger.info("This is the size of the matched shapes:")
-            logger.info(len(matched_shapes))
-            logger.info(matched_shapes)
+            # logger.info("This is the size of the matched shapes:")
+            # logger.info(len(matched_shapes))
+            # logger.info(matched_shapes)
             for i in range (1, 243):
                 # logger.info(weights[densenet_index(i)].shape[0])
                 # if len(weights[densenet_index(i)+1].shape) is not 1:
@@ -624,9 +691,10 @@ def local_retrain(local_datasets, weights, args, mode="bottom-up", freezing_inde
         if mode == "squeezing":
             matched_cnn = densenet121()
         else:
-            matched_cnn = densenet121Container(num_filters = num_filters, layer_index = layer_index)
+            # matched_cnn = densenet121Container(num_filters = num_filters, layer_index = layer_index)
+            matched_cnn = densenet121()
 
-        weights = adapt_densenet_weights(matched_cnn = matched_cnn, weights = weights, layer_index = layer_index)
+        # weights = adapt_densenet_weights(matched_cnn = matched_cnn, weights = weights, layer_index = layer_index)
             
     elif args.model == "moderate-cnn":
         #[(35, 27), (35,), (68, 315), (68,), (132, 612), (132,), (132, 1188), (132,), 
@@ -816,6 +884,8 @@ def local_retrain(local_datasets, weights, args, mode="bottom-up", freezing_inde
             # logger.info(param.size())
             # logger.info(key_name)
             # logger.info(param_idx)
+            if "num_batches_tracked" in key_name:
+                continue
             if "conv" in key_name:
                 if "weight" in key_name:
                     temp_dict = {key_name: torch.from_numpy(weights[param_idx].reshape(param.size()))}
@@ -834,22 +904,22 @@ def local_retrain(local_datasets, weights, args, mode="bottom-up", freezing_inde
         new_state_dict.update(temp_dict)
     matched_cnn.load_state_dict(new_state_dict)
     
-
-    for param_idx, param in enumerate(matched_cnn.parameters()):
-        if mode == "bottom-up":
-            # for this freezing mode, we freeze the layer before freezing index
-            if param_idx < freezing_index:
-                param.requires_grad = False
-        elif mode == "per-layer":
-            # for this freezing mode, we only unfreeze the freezing index
-            if param_idx not in (densenet_index(freezing_index), densenet_index(freezing_index)+1):
-                param.requires_grad = False
-        elif mode == "block-wise":
-            # for block-wise retraining the `freezing_index` becomes a range of indices
-            if param_idx not in __non_loading_indices:
-                param.requires_grad = False
-        elif mode == "squeezing":
-            pass
+    # cannot be applied in simplified FedMA
+    # for param_idx, param in enumerate(matched_cnn.parameters()):
+    #     if mode == "bottom-up":
+    #         # for this freezing mode, we freeze the layer before freezing index
+    #         if param_idx < freezing_index:
+    #             param.requires_grad = False
+    #     elif mode == "per-layer":
+    #         # for this freezing mode, we only unfreeze the freezing index
+    #         if param_idx not in (densenet_index(freezing_index), densenet_index(freezing_index)+1):
+    #             param.requires_grad = False
+    #     elif mode == "block-wise":
+    #         # for block-wise retraining the `freezing_index` becomes a range of indices
+    #         if param_idx not in __non_loading_indices:
+    #             param.requires_grad = False
+    #     elif mode == "squeezing":
+    #         pass
 
     matched_cnn.to(device).train()
     # start training last fc layers:
@@ -868,6 +938,8 @@ def local_retrain(local_datasets, weights, args, mode="bottom-up", freezing_inde
         else:
             #optimizer_fine_tune = optim.SGD(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=args.retrain_lr, momentum=0.9)
             optimizer_fine_tune = optim.Adam(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=0.001, weight_decay=0.0001, amsgrad=True)
+    if args.model == 'densenet121':
+        optimizer_fine_tune = optim.Adam(filter(lambda p: p.requires_grad, matched_cnn.parameters()), lr=0.0001, weight_decay=0.0001, amsgrad=True)
         
     criterion_fine_tune = nn.CrossEntropyLoss().to(device)
 
@@ -880,24 +952,28 @@ def local_retrain(local_datasets, weights, args, mode="bottom-up", freezing_inde
 
         logger.info('>> Pre-Training Training accuracy: {}'.format(train_acc))
         logger.info('>> Pre-Training Test accuracy: {}'.format(test_acc))
-    else:
-        train_auroc = compute_auroc(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
-        test_auroc = compute_auroc(matched_cnn, test_dl_local, device=device, dataset=args.dataset)
+    # else:
+    #     train_auroc = compute_auroc(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
+    #     test_auroc = compute_auroc(matched_cnn, test_dl_local, device=device, dataset=args.dataset)
 
-        logger.info('>> Pre-Training Training auroc: {}'.format(train_auroc))
-        logger.info('>> Pre-Training Test auroc: {}'.format(test_auroc))
+    #     logger.info('>> Pre-Training Training auroc: {}'.format(train_auroc))
+    #     logger.info('>> Pre-Training Test auroc: {}'.format(test_auroc))
 
-    if mode != "block-wise":
-        if freezing_index < (len(weights) - 2):
-            retrain_epochs = args.retrain_epochs
-        else:
-            retrain_epochs = int(args.retrain_epochs*3)
-    else:
-        retrain_epochs = args.retrain_epochs
+    # if mode != "block-wise":
+    #     if freezing_index < (len(weights) - 2):
+    #         retrain_epochs = args.retrain_epochs
+    #     else:
+    #         retrain_epochs = int(args.retrain_epochs*3)
+    # else:
+    #     retrain_epochs = args.retrain_epochs
+    retrain_epochs = args.retrain_epochs
+
 
     for epoch in range(retrain_epochs):
         epoch_loss_collector = []
+        # subprocess.run(["cd", "$TMP"])
         for batch_idx, (x, target) in enumerate(train_dl_local):
+            #subprocess.run(["cd", "/pfs/work7/workspace/scratch/sq8430-data_workspace/"])
             target = handle_uncertainty_labels(target)
             target = handle_NaN_values(target) 
             x, target = x.to(device), target.to(device)
@@ -913,7 +989,8 @@ def local_retrain(local_datasets, weights, args, mode="bottom-up", freezing_inde
 
             loss.backward()
             optimizer_fine_tune.step()
-
+            #subprocess.run(["cd", "$TMP"])
+        #subprocess.run(["cd", "/pfs/work7/workspace/scratch/sq8430-data_workspace/"])
         #logging.debug('Epoch: %d Loss: %f L2 loss: %f' % (epoch, loss.item(), reg*l2_reg))
         epoch_loss = sum(epoch_loss_collector) / len(epoch_loss_collector)
         logger.info('Epoch: %d Epoch Avg Loss: %f' % (epoch, epoch_loss))
@@ -935,9 +1012,16 @@ def local_retrain(local_datasets, weights, args, mode="bottom-up", freezing_inde
 
 def local_retrain_2(local_datasets, weights, args, mode="bottom-up", freezing_index=0, ori_assignments=None, device="cpu"):
     """
-    freezing_index :: starting from which layer we update the model weights,
-                      i.e. freezing_index = 0 means we train the whole network normally
-                           freezing_index = len(model) means we freez the entire network
+    New function to construct the local models with their new parameters from FedMA and retrain them 
+    Used for the approaches that do not match the batch normalization layers on their own (here approaches 3-6)
+
+    : local_datasets: Tuple containing local training and local test dataset
+    : weights: parameters that are to be used in the new local models
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : mode: Retrain mode
+    : freezing_index: layer index up until which the parameters are not adapted during training / fixed
+    : ori_assignments: List of the assignments of the global to the local model parameters
+    : device: device on which the computation is done (cpu or gpu)
     """
     if args.model == "lenet":
         num_filters = [weights[0].shape[0], weights[2].shape[0]]
@@ -1333,10 +1417,14 @@ def local_retrain_2(local_datasets, weights, args, mode="bottom-up", freezing_in
 
 
 def local_retrain_fedavg(local_datasets, weights, args, device="cpu"):
+    
     """
-    freezing_index :: starting from which layer we update the model weights,
-                      i.e. freezing_index = 0 means we train the whole network normally
-                           freezing_index = len(model) means we freez the entire network
+    Old adapted function to construct the local models with their new parameters from FedAvg and retrain them 
+
+    : local_datasets: Tuple containing local training and local test dataset
+    : weights: parameters that are to be used in the new local models
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : device: device on which the computation is done (cpu or gpu)
     """
     if args.model == "lenet":
         num_filters = [weights[0].shape[0], weights[2].shape[0]]
@@ -1471,11 +1559,16 @@ def local_retrain_fedavg(local_datasets, weights, args, device="cpu"):
     return matched_cnn
 
 def local_retrain_fedavg_2(local_datasets, weights, args, device="cpu"):
+    
     """
-    freezing_index :: starting from which layer we update the model weights,
-                      i.e. freezing_index = 0 means we train the whole network normally
-                           freezing_index = len(model) means we freez the entire network
+    New function to construct the local models with their new parameters from FedAvg and retrain them 
+
+    : local_datasets: Tuple containing local training and local test dataset
+    : weights: parameters that are to be used in the new local models
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : device: device on which the computation is done (cpu or gpu)
     """
+
     if args.model == "lenet":
         num_filters = [weights[0].shape[0], weights[2].shape[0]]
         kernel_size = 5
@@ -1609,11 +1702,16 @@ def local_retrain_fedavg_2(local_datasets, weights, args, device="cpu"):
     return matched_cnn
 
 def local_retrain_fedavg_simplified(local_datasets, weights, args, device="cpu"):
+    
     """
-    freezing_index :: starting from which layer we update the model weights,
-                      i.e. freezing_index = 0 means we train the whole network normally
-                           freezing_index = len(model) means we freez the entire network
+    New function to construct the local models with their new parameters from FedAvg and retrain them 
+
+    : local_datasets: Tuple containing local training and local test dataset
+    : weights: parameters that are to be used in the new local models
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : device: device on which the computation is done (cpu or gpu)
     """
+
     if args.model == "lenet":
         num_filters = [weights[0].shape[0], weights[2].shape[0]]
         kernel_size = 5
@@ -1665,18 +1763,20 @@ def local_retrain_fedavg_simplified(local_datasets, weights, args, device="cpu")
     new_state_dict = {}
     # handle the conv layers part which is not changing
     for param_idx, (key_name, param) in enumerate(matched_cnn.state_dict().items()):
+        if "num_batches_tracked" in key_name:
+            continue
         if "conv" in key_name:
             if "weight" in key_name:
-                temp_dict = {key_name: torch.from_numpy(weights[param_idx].reshape(param.size()))}
+                temp_dict = {key_name: torch.from_numpy(np.array(weights[param_idx]).reshape(param.size()))}
             elif "bias" in key_name:
-                temp_dict = {key_name: torch.from_numpy(weights[param_idx])}
+                temp_dict = {key_name: torch.from_numpy(np.array(weights[param_idx]))}
         elif "norm" in key_name:
-                temp_dict = {key_name: torch.from_numpy(weights[param_idx].reshape(param.size()))}
+            temp_dict = {key_name: torch.from_numpy(np.array(weights[param_idx]).reshape(param.size()))}
         elif "fc" in key_name or "classifier" in key_name:
             if "weight" in key_name:
-                temp_dict = {key_name: torch.from_numpy(weights[param_idx].T)}
+                temp_dict = {key_name: torch.from_numpy(np.array(weights[param_idx]).T)}
             elif "bias" in key_name:
-                temp_dict = {key_name: torch.from_numpy(weights[param_idx])}
+                temp_dict = {key_name: torch.from_numpy(np.array(weights[param_idx]))}
         
         new_state_dict.update(temp_dict)
     matched_cnn.load_state_dict(new_state_dict)
@@ -1702,12 +1802,12 @@ def local_retrain_fedavg_simplified(local_datasets, weights, args, device="cpu")
 
         logger.info('>> Pre-Training Training accuracy: {}'.format(train_acc))
         logger.info('>> Pre-Training Test accuracy: {}'.format(test_acc))
-    else:
-        train_auroc = compute_auroc(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
-        test_auroc = compute_auroc(matched_cnn, test_dl_local, device=device, dataset=args.dataset)
+    # else:
+    #     train_auroc = compute_auroc(matched_cnn, train_dl_local, device=device, dataset=args.dataset)
+    #     test_auroc = compute_auroc(matched_cnn, test_dl_local, device=device, dataset=args.dataset)
 
-        logger.info('>> Pre-Training Training auroc: {}'.format(train_auroc))
-        logger.info('>> Pre-Training Test auroc: {}'.format(test_auroc))
+    #     logger.info('>> Pre-Training Training auroc: {}'.format(train_auroc))
+    #     logger.info('>> Pre-Training Test auroc: {}'.format(test_auroc))
 
 
     for epoch in range(args.retrain_epochs):
@@ -1720,7 +1820,7 @@ def local_retrain_fedavg_simplified(local_datasets, weights, args, device="cpu")
             optimizer_fine_tune.zero_grad()
             x.requires_grad = True
             target.requires_grad = False
-            target = target.long()
+            #target = target.long()
 
             out = matched_cnn(x)
             loss = criterion_fine_tune(out, target)
@@ -1749,6 +1849,17 @@ def local_retrain_fedavg_simplified(local_datasets, weights, args, device="cpu")
 
 
 def reconstruct_local_net(weights, args, ori_assignments=None, worker_index=0):
+
+    """
+    Old adapted function that was originally intended to construct the local models with their new parameters from matching  
+    Since our efforts to adapt this our setting did not work we created a new function from scratch
+
+    : weights: parameters that are to be used in the new local models
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : ori_assignments: List of the assignments of the global to the local model parameters
+    : worker_index: Client ID
+    """
+
     if args.model == "lenet":
         num_filters = [weights[0].shape[0], weights[2].shape[0]]
         kernel_size = 5
@@ -1907,6 +2018,17 @@ def reconstruct_local_net(weights, args, ori_assignments=None, worker_index=0):
     return reconstructed_weights
 
 def reconstruct_local_net_2(weights, args, ori_assignments=None, worker_index=0):
+
+    """
+    New function that was originally intended to construct the local models with their new parameters from matching  
+    Since our efforts to adapt this our setting did not work we created a new function from scratch
+
+    : weights: parameters that are to be used in the new local models
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : ori_assignments: List of the assignments of the global to the local model parameters
+    : worker_index: Client ID
+    """
+
     if args.model == "lenet":
         num_filters = [weights[0].shape[0], weights[2].shape[0]]
         kernel_size = 5
@@ -2067,6 +2189,19 @@ def reconstruct_local_net_2(weights, args, ori_assignments=None, worker_index=0)
 def oneshot_matching(nets_list, model_meta_data, layer_type, net_dataidx_map, 
                             averaging_weights, args, 
                             device="cpu"):
+
+    '''
+    Old function for oneshot matching which ist not needed and not used in our analysis
+
+    : nets_list: List of the local models
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : net_dataidx_map: List determining which data point belongs to which client
+    : averaging_weights: Describes the class frequency, used to match the last layer
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : device: Device on which the computation is performed (gpu or cpu)
+    '''
+
     # starting the neural matching
     models = nets_list
     cls_freqs = traindata_cls_counts
@@ -2210,6 +2345,25 @@ def oneshot_matching(nets_list, model_meta_data, layer_type, net_dataidx_map,
 def BBP_MAP(nets_list, model_meta_data, layer_type, net_dataidx_map, 
                             averaging_weights, args, 
                             device="cpu"):
+
+    '''
+    Old adapted function for FedMA - BBP-MAP step (matching)
+    Used for the approaches that match the batch normalization layers on their own
+    Performs BBP_MAP step in the original version of FedMA, i.e. that for each layer we 
+    compute the global model parameters, fill in the local parameters according to the selected approach (here 1 or 2) and the respective local assignments
+    - works as intended but the structure of the DenseNet121 leads to dimension conflicts
+        
+    Last layer is handled separately
+
+    : nets_list: List of the local models
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : net_dataidx_map: List determining which data point belongs to which client
+    : averaging_weights: Describes the class frequency, used to match the last layer
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : device: Device on which the computation is performed (gpu or cpu)
+    '''
+
     # starting the neural matching
     logger.info("Starting BBP_MAP")
     models = nets_list
@@ -2425,6 +2579,25 @@ def BBP_MAP(nets_list, model_meta_data, layer_type, net_dataidx_map,
 def BBP_MAP_2(nets_list, model_meta_data, layer_type, net_dataidx_map, 
                             averaging_weights, args, 
                             device="cpu"):
+
+    '''
+    New function for FedMA - BBP-MAP step (matching)
+    Used for the approaches that do not match the batch normalization layers on their own
+    Performs BBP_MAP step in the original version of FedMA, i.e. that for each layer we 
+    compute the global model parameters, fill in the local parameters according to the selected approach (here 3 or 4) and the respective local assignments
+    - since approaches 3 and 4 do not work in our setting
+        
+    Last layer is handled separately
+
+    : nets_list: List of the local models
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : net_dataidx_map: List determining which data point belongs to which client
+    : averaging_weights: Describes the class frequency, used to match the last layer
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : device: Device on which the computation is performed (gpu or cpu)
+    '''
+
     # starting the neural matching
     logger.info("Starting BBP_MAP_2")
     models = nets_list
@@ -2587,6 +2760,25 @@ def BBP_MAP_2(nets_list, model_meta_data, layer_type, net_dataidx_map,
 def BBP_MAP_3(nets_list, model_meta_data, layer_type, net_dataidx_map, 
                             averaging_weights, args, 
                             device="cpu"):
+
+    '''
+    New function for FedMA - BBP-MAP step (matching)
+    Used for the approaches that do not consider the batch normalization layers
+    Performs BBP_MAP step in the original version of FedMA, i.e. that for each layer we 
+    compute the global model parameters, fill in the local parameters according to the selected approach (here 5 or 6) and the respective local assignments
+    - we could not test this method due to time restrictions
+        
+    Last layer is handled separately
+
+    : nets_list: List of the local models
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : net_dataidx_map: List determining which data point belongs to which client
+    : averaging_weights: Describes the class frequency, used to match the last layer
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : device: Device on which the computation is performed (gpu or cpu)
+    '''
+
     # starting the neural matching
     logger.info("Starting BBP_MAP_3")
     models = nets_list
@@ -2750,6 +2942,24 @@ def BBP_MAP_3(nets_list, model_meta_data, layer_type, net_dataidx_map,
 def BBP_MAP_not_layerwise(nets_list, model_meta_data, layer_type, net_dataidx_map, 
                             averaging_weights, args, 
                             device="cpu"):
+
+    '''
+    New function for FedMA - BBP-MAP step (matching)
+    Used for the approaches that match the batch normalization layers on their own
+    Performs BBP_MAP step in our simplified version of FedMA, i.e. that for each layer we 
+    compute the global model parameters, fill in the local parameters according to the selected approach (here 1 or 2) and the respective local assignments
+        
+    Last layer is handled separately
+
+    : nets_list: List of the local models
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : net_dataidx_map: List determining which data point belongs to which client
+    : averaging_weights: Describes the class frequency, used to match the last layer
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : device: Device on which the computation is performed (gpu or cpu)
+    '''
+
     # starting the neural matching
     logger.info("Starting BBP_MAP (not layerwise)")
     models = nets_list
@@ -2808,9 +3018,9 @@ def BBP_MAP_not_layerwise(nets_list, model_meta_data, layer_type, net_dataidx_ma
     
     num_layers = len(batch_weights[0])
 
-    with open('./matching_weights_cache/matched_layerwise_weights', 'wb') as weights_file:
+    with open('./matching_weights_cache/matched_weights_not_layerwise', 'wb') as weights_file:
         pickle.dump(matched_weights, weights_file)
-
+    # subprocess.run(["rsync", "-zvh", "matched_weights_not_layerwise", "/pfs/work7/workspace/scratch/sq8430-data_workspace/matching_weights_cache/"])
     last_layer_weights_collector = []
 
     for i in range(num_workers):
@@ -2844,6 +3054,24 @@ def BBP_MAP_not_layerwise(nets_list, model_meta_data, layer_type, net_dataidx_ma
 def BBP_MAP_not_layerwise_2(nets_list, model_meta_data, layer_type, net_dataidx_map, 
                             averaging_weights, args, 
                             device="cpu"):
+
+    '''
+    New function for FedMA - BBP-MAP step (matching)
+    Used for the approaches that do not match the batch normalization layers on their own
+    Performs BBP_MAP step in our simplified version of FedMA, i.e. that for each layer we 
+    compute the global model parameters, fill in the local parameters according ot the selected approach (here 5 or 6) and the respective local assignments
+        
+    Last layer is handled separately
+
+    : nets_list: List of the local models
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : net_dataidx_map: List determining which data point belongs to which client
+    : averaging_weights: Describes the class frequency, used to match the last layer
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : device: Device on which the computation is performed (gpu or cpu)
+    '''
+
     # starting the neural matching
     logger.info("Starting BBP_MAP 2 (not layerwise) with batchnorm combined with convolutional layer")
     models = nets_list
@@ -2944,19 +3172,38 @@ def fedavg_comm(batch_weights, model_meta_data, layer_type, net_dataidx_map,
                             comm_round=2,
                             device="cpu"):
 
-    logging.info("=="*15)
-    logging.info("Weights shapes: {}".format([bw.shape for bw in batch_weights[0]]))
+    '''
+    Old adapted function for FedAvg with communication
+    Performs FedAvg with communication, i.e. that in each communication round we 
+        - retrain the local models
+        - extract the local model parameters
+        - average the local model parameters
+        (- save and analyze the results)
+
+    : batch_weights: initial weights
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : net_dataidx_map: List determining which data point belongs to which client
+    : averaging_weights: Describes the class frequency, used to match the last layer
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : train_dl_global: DataLoader for the global training data 
+    : test_dl_global: DataLoader for the global test data
+    : assignments_list: Contains the assignments of the global to the local parameters for all clients
+    : comm_round: Number of communication rounds
+    : device: Device on which the computation is performed (gpu or cpu)
+    '''
 
     for cr in range(comm_round):
         retrained_nets = []
         logger.info("Communication round : {}".format(cr))
         for worker_index in range(args.n_nets):
+            logger.info("Client {}".format(worker_index))
             dataidxs = net_dataidx_map[worker_index]
             train_dl_local, test_dl_local = get_dataloader(args.dataset, args_datadir, args.batch_size, 32, dataidxs)
             
             # def local_retrain_fedavg(local_datasets, weights, args, device="cpu"):
             retrained_cnn = local_retrain_fedavg_simplified((train_dl_local,test_dl_local), batch_weights[worker_index], args, device=device)
-            
+            logger.info("=======================================================================")
             retrained_nets.append(retrained_cnn)
         batch_weights = pdm_prepare_full_weights_cnn(retrained_nets, device=device)
 
@@ -2978,6 +3225,8 @@ def fedavg_comm(batch_weights, model_meta_data, layer_type, net_dataidx_map,
                             args=args)
         batch_weights = [copy.deepcopy(averaged_weights) for _ in range(args.n_nets)]
         del averaged_weights
+        if cr < 1:
+            save_weights(batch_weights, "Pre_FedAvg_comm")
 
     return batch_weights[0]
 
@@ -2987,6 +3236,27 @@ def fedavg_comm_2(batch_weights, model_meta_data, layer_type, net_dataidx_map,
                             test_dl_global,
                             comm_round=2,
                             device="cpu"):
+
+    '''
+    New function for FedAvg with communication (testing)
+    Performs FedAvg with communication, i.e. that in each communication round we 
+        - retrain the local models
+        - extract the local model parameters
+        - average the local model parameters
+        (-analyze the results)
+
+    : batch_weights: initial weights
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : net_dataidx_map: List determining which data point belongs to which client
+    : averaging_weights: Describes the class frequency, used to match the last layer
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : train_dl_global: DataLoader for the global training data 
+    : test_dl_global: DataLoader for the global test data
+    : assignments_list: Contains the assignments of the global to the local parameters for all clients
+    : comm_round: Number of communication rounds
+    : device: Device on which the computation is performed (gpu or cpu)
+    '''
 
     logging.info("=="*15)
     logging.info("Weights shapes: {}".format([bw.shape for bw in batch_weights[0]]))
@@ -2999,6 +3269,7 @@ def fedavg_comm_2(batch_weights, model_meta_data, layer_type, net_dataidx_map,
             train_dl_local, test_dl_local = get_dataloader(args.dataset, args_datadir, args.batch_size, 32, dataidxs)
             
             # def local_retrain_fedavg(local_datasets, weights, args, device="cpu"):
+            # this part was adapted
             retrained_cnn = local_retrain_fedavg_simplified((train_dl_local,test_dl_local), batch_weights[worker_index], args, device=device)
             
             retrained_nets.append(retrained_cnn)
@@ -3033,9 +3304,25 @@ def fedma_comm(batch_weights, model_meta_data, layer_type, net_dataidx_map,
                             comm_round=2,
                             device="cpu"):
     '''
-    version 0.0.2
-    In this version we achieve layerwise matching with communication in a blockwise style
-    i.e. we unfreeze a block of layers (each 3 consecutive layers)---> retrain them ---> and rematch them
+    Old adapted function for original FedMA (not applicable in our setting)
+    Used for the approaches that match the batch normalization layers on their own
+    Performs FedMA with communication, i.e. that in each communication round we 
+        - align our global parameters so that they can be used in the local models
+        - retrain the local models
+        - match the local model parameters
+        (-save and analyze the results)
+
+    : batch_weights: initial weights
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : net_dataidx_map: List determining which data point belongs to which client
+    : averaging_weights: Describes the class frequency, used to match the last layer
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : train_dl_global: DataLoader for the global training data 
+    : test_dl_global: DataLoader for the global test data
+    : assignments_list: Contains the assignments of the global to the local parameters for all clients
+    : comm_round: Number of communication rounds
+    : device: Device on which the computation is performed (gpu or cpu)
     '''
     n_layers = 242
     num_workers = len(batch_weights)
@@ -3059,6 +3346,7 @@ def fedma_comm(batch_weights, model_meta_data, layer_type, net_dataidx_map,
             train_dl_local, test_dl_local = get_dataloader(args.dataset, args_datadir, args.batch_size, 32, dataidxs)
 
             # for the "squeezing" mode, we pass assignment list wrt this worker to the `local_retrain` function
+            # unsure whether this method works in our setting
             recons_local_net = reconstruct_local_net(batch_weights[worker_index], args, ori_assignments=assignments_list, worker_index=worker_index)
             retrained_cnn = local_retrain((train_dl_local,test_dl_local), recons_local_net, args,
                                             mode="bottom-up", freezing_index=1000, ori_assignments=None, device=device)
@@ -3087,9 +3375,25 @@ def fedma_comm_2(batch_weights, model_meta_data, layer_type, net_dataidx_map,
                             comm_round=2,
                             device="cpu"):
     '''
-    version 0.0.2
-    In this version we achieve layerwise matching with communication in a blockwise style
-    i.e. we unfreeze a block of layers (each 3 consecutive layers)---> retrain them ---> and rematch them
+    New function for original FedMA (not applicable in our setting)
+    Used for the approaches that do not match the batch normalization layers on their own
+    Performs FedMA with communication, i.e. that in each communication round we 
+        - align our global parameters so that they can be used in the local models
+        - retrain the local models
+        - match the local model parameters
+        (-save and analyze the results)
+
+    : batch_weights: initial weights
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : net_dataidx_map: List determining which data point belongs to which client
+    : averaging_weights: Describes the class frequency, used to match the last layer
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : train_dl_global: DataLoader for the global training data 
+    : test_dl_global: DataLoader for the global test data
+    : assignments_list: Contains the assignments of the global to the local parameters for all clients
+    : comm_round: Number of communication rounds
+    : device: Device on which the computation is performed (gpu or cpu)
     '''
     n_layers = 121
     num_workers = len(batch_weights)
@@ -3113,6 +3417,7 @@ def fedma_comm_2(batch_weights, model_meta_data, layer_type, net_dataidx_map,
             train_dl_local, test_dl_local = get_dataloader(args.dataset, args_datadir, args.batch_size, 32, dataidxs)
 
             # for the "squeezing" mode, we pass assignment list wrt this worker to the `local_retrain` function
+            # unsure whether this method works in our setting
             recons_local_net = reconstruct_local_net_2(batch_weights[worker_index], args, ori_assignments=assignments_list, worker_index=worker_index)
             retrained_cnn = local_retrain_2((train_dl_local,test_dl_local), recons_local_net, args,
                                             mode="bottom-up", freezing_index=1000, ori_assignments=None, device=device)
@@ -3141,9 +3446,25 @@ def fedma_comm_not_layerwise(batch_weights, model_meta_data, layer_type, net_dat
                             comm_round=2,
                             device="cpu"):
     '''
-    version 0.0.2
-    In this version we achieve layerwise matching with communication in a blockwise style
-    i.e. we unfreeze a block of layers (each 3 consecutive layers)---> retrain them ---> and rematch them
+    New function for simplified FedMA
+    Used for the approaches that match the batch normalization layers on their own
+    Performs FedMA with communication, i.e. that in each communication round we 
+        - align our global parameters so that they can be used in the local models
+        - retrain the local models
+        - match the local model parameters
+        (-save and analyze the results)
+
+    : batch_weights: initial weights
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : net_dataidx_map: List determining which data point belongs to which client
+    : averaging_weights: Describes the class frequency, used to match the last layer
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : train_dl_global: DataLoader for the global training data (not needed)
+    : test_dl_global: DataLoader for the global test data
+    : assignments_list: Contains the assignments of the global to the local parameters for all clients
+    : comm_round: Number of communication rounds
+    : device: Device on which the computation is performed (gpu or cpu)
     '''
     n_layers = 242
     num_workers = len(batch_weights)
@@ -3156,69 +3477,81 @@ def fedma_comm_not_layerwise(batch_weights, model_meta_data, layer_type, net_dat
 
     cls_freqs = traindata_cls_counts
     n_classes = 10
-    batch_freqs = pdm_prepare_freq(cls_freqs, n_classes)
+    # batch_freqs = pdm_prepare_freq(cls_freqs, n_classes)
     it=5
 
     for cr in range(comm_round):
         logger.info("Entering communication round: {} ...".format(cr))
         retrained_nets = []
         for worker_index in range(args.n_nets):
+            logger.info("Client {}".format(worker_index))
             dataidxs = net_dataidx_map[worker_index]
             train_dl_local, test_dl_local = get_dataloader(args.dataset, args_datadir, args.batch_size, 32, dataidxs)
 
             # for the "squeezing" mode, we pass assignment list wrt this worker to the `local_retrain` function
             # recons_local_net = reconstruct_local_net_2(batch_weights[worker_index], args, ori_assignments=assignments_list, worker_index=worker_index)
-            new_weights = match_global_to_local_weights(batch_weights, assignments_list, worker_index, not_layerwise=True )
-            retrained_cnn = local_retrain((train_dl_local,test_dl_local), new_weights, args,
+
+            # if the initial weights are not aligned, this needs to be uncommented and the local_retrain method needs to take the new_weights as input
+            # new_weights = match_global_to_local_weights(batch_weights, assignments_list, worker_index, not_layerwise=True )
+            retrained_cnn = local_retrain((train_dl_local,test_dl_local), batch_weights[worker_index], args,
                                             mode="bottom-up", freezing_index=1000, ori_assignments=None, device=device)
             retrained_nets.append(retrained_cnn)
-
+            logger.info("=======================================================================")
         # BBP_MAP step
         hungarian_weights, assignments_list = BBP_MAP_not_layerwise(retrained_nets, model_meta_data, layer_type, net_dataidx_map, averaging_weights, args, device=device)
 
-        logger.info("After retraining and rematching for comm. round: {}, we measure the accuracy ...".format(cr))
-        overall_train_auroc = 0
-        overall_test_auroc = 0
+        # additional tests in between - commented to save time
+        # logger.info("After retraining and rematching for comm. round: {}, we measure the accuracy ...".format(cr))
+        # overall_train_auroc = 0
+        # overall_test_auroc = 0
 
-        train_auroc_list, test_auroc_list = compute_local_model_auroc(models,
-                                hungarian_weights,
-                                assignments_list,
-                                net_dataidx_map,
-                                args_datadir,
-                                n_classes,
-                                device=device,
-                                args=args)
+        # train_auroc_list, test_auroc_list = compute_local_model_auroc(models,
+        #                         hungarian_weights,
+        #                         assignments_list,
+        #                         net_dataidx_map,
+        #                         args_datadir,
+        #                         n_classes,
+        #                         device=device,
+        #                         args=args)
 
-        for i in range(args.n_nets):
-            overall_train_auroc += train_auroc_list[i]
-            overall_test_auroc += test_auroc_list[i]
+        # for i in range(args.n_nets):
+        #     overall_train_auroc += train_auroc_list[i]
+        #     overall_test_auroc += test_auroc_list[i]
 
-        overall_train_auroc = overall_train_auroc / args.n_nets
-        overall_test_auroc = overall_test_auroc / args.n_nets
+        # overall_train_auroc = overall_train_auroc / args.n_nets
+        # overall_test_auroc = overall_test_auroc / args.n_nets
 
-        logger.info("Average auroc score with matched weights on local training dataset: {}".format(overall_train_auroc))
-        logger.info("Average auroc score with matched weights on local test dataset: {}".format(overall_test_auroc))
-        logger.info("===================================================================")
-        overall_global_test_auroc = 0
-
-        global_test_auroc_list = compute_local_model_auroc_global_dataset(models,
-                                hungarian_weights,
-                                assignments_list,
-                                test_dl_global,
-                                args_datadir,
-                                n_classes,
-                                device=device,
-                                args=args)
-
-        for i in range(args.n_nets):
-            overall_global_test_auroc += global_test_auroc_list[i]
-
-        overall_global_test_auroc = overall_global_test_auroc / args.n_nets
-
-        logger.info("Average AUROC score with matched weights on global test dataset: {}".format(overall_global_test_auroc))
-        logger.info("===================================================================")
+        # logger.info("Average auroc score with matched weights on local training dataset: {}".format(overall_train_auroc))
+        # logger.info("Average auroc score with matched weights on local test dataset: {}".format(overall_test_auroc))
+        
         batch_weights = copy.deepcopy(hungarian_weights)
         del hungarian_weights
+        if cr < 2:
+            adapted_weights = []
+            for worker_index in range(args.n_nets):
+                new_weights = match_global_to_local_weights(batch_weights, assignments_list, worker_index, not_layerwise=True )
+                adapted_weights.append(new_weights)
+            save_weights(adapted_weights, "Pre_FedMA_comm_not_layerwise")
+            # subprocess.run(["rsync", "-zvh", "trained_weightsPre_FedMA_comm_not_layerwise", "/pfs/work7/workspace/scratch/sq8430-data_workspace/saved_weights/"])
+    logger.info("===================================================================")
+    overall_global_test_auroc = 0
+
+    global_test_auroc_list = compute_local_model_auroc_global_dataset(models,
+                            batch_weights,
+                            assignments_list,
+                            test_dl_global,
+                            args_datadir,
+                            n_classes,
+                            device=device,
+                            args=args)
+
+    for i in range(args.n_nets):
+        overall_global_test_auroc += global_test_auroc_list[i]
+
+    overall_global_test_auroc = overall_global_test_auroc / args.n_nets
+
+    logger.info("Average AUROC score with matched weights on global test dataset: {}".format(overall_global_test_auroc))
+    logger.info("===================================================================")
     adapted_weights = []
     for worker_index in range(args.n_nets):
         new_weights = match_global_to_local_weights(batch_weights, assignments_list, worker_index, not_layerwise=True )
@@ -3233,9 +3566,25 @@ def fedma_comm_not_layerwise_2(batch_weights, model_meta_data, layer_type, net_d
                             comm_round=2,
                             device="cpu"):
     '''
-    version 0.0.2
-    In this version we achieve layerwise matching with communication in a blockwise style
-    i.e. we unfreeze a block of layers (each 3 consecutive layers)---> retrain them ---> and rematch them
+    New function for simplified FedMA
+    Used for the approaches that do not match the batch normalization layers on their own
+    Performs FedMA with communication, i.e. that in each communication round we 
+        - align our global parameters so that they can be used in the local models
+        - retrain the local models
+        - match the local model parameters
+        (-save and analyze the results)
+
+    : batch_weights: initial weights
+    : model_meta_data: contains information about the size of the parameters for each layer
+    : layer_type: contains the "names" of the layers, e.g. conv_layer.0.weight
+    : net_dataidx_map: List determining which data point belongs to which client
+    : averaging_weights: Describes the class frequency, used to match the last layer
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    : train_dl_global: DataLoader for the global training data (not needed)
+    : test_dl_global: DataLoader for the global test data
+    : assignments_list: Contains the assignments of the global to the local parameters for all clients
+    : comm_round: Number of communication rounds
+    : device: Device on which the computation is performed (gpu or cpu)
     '''
     n_layers = 242
     num_workers = len(batch_weights)
@@ -3324,22 +3673,13 @@ if __name__ == "__main__":
     logger.info(device)
     args = add_fit_args(argparse.ArgumentParser(description='Probabilistic Federated CNN Matching'))
 
-    # logger.info("Data is on $TMP file system")
-    # if not os.path.isdir(args_datadir):
-    #     logger.info("False: Copy data")
-    #     from_directory = "/pfs/data5/home/kit/aifb/sq8430/Federated-Learning-in-Healthcare/data/CheXpert-v1.0-small/"
-    #     to_directory = args_datadir
-    #     copy_tree(from_directory, to_directory)
-    # else:
-    #     logger.info("True")
-
     seed = 0
 
     np.random.seed(seed)
     torch.manual_seed(seed)
 
     logger.info("Partitioning data")
-
+    # split the data into subsets
     if args.partition != "hetero-fbs":
         y_train, net_dataidx_map, traindata_cls_counts = partition_data(args.dataset, args_datadir, args_logdir, 
                                                                 args.partition, args.n_nets, args_alpha, args=args)
@@ -3370,6 +3710,7 @@ if __name__ == "__main__":
         "Fracture",
         "Support Devices"]
         
+        # compute averaging weights
         for i in range(n_classes):
             class_i = observation_classes[i]
             total_num_counts = 0
@@ -3404,11 +3745,14 @@ if __name__ == "__main__":
     logger.info("Retrain? : {}".format(args.retrain))
 
     ### local training stage
+    # will load the local model weights or train them from scratch depending on the value of args.retrain
     nets_list = local_train(nets, args, net_dataidx_map, device=device)
 
+    # create dataloaders for the global training and test data
     train_dl_global, test_dl_global = get_dataloader(args.dataset, args_datadir, args.batch_size, 32)
 
     # ensemble part of experiments
+    # not needed
     if not(args.dataset == "chexpert"):
         logger.info("Computing Uniform ensemble accuracy")
         uens_train_acc, _ = compute_ensemble_accuracy(nets_list, train_dl_global, n_classes,  uniform_weights=True, device=device, dataset = args.dataset)
@@ -3425,6 +3769,7 @@ if __name__ == "__main__":
     #     logger.info("Uniform ensemble (Test auroc): {}".format(uens_test_auroc))
 
     # for PFNM
+    # this was not adapted for CheXpert and the DenseNet121
     if args.oneshot_matching:
         hungarian_weights, assignments_list = oneshot_matching(nets_list, model_meta_data, layer_type, net_dataidx_map, averaging_weights, args, device=device)
         _ = compute_full_cnn_accuracy(hungarian_weights,
@@ -3435,37 +3780,56 @@ if __name__ == "__main__":
                                    device=device,
                                    args=args)
 
-    # this is for PFNM
-    logger.info("Start BBP_MAP")
-    hungarian_weights, assignments_list = BBP_MAP_not_layerwise(nets_list, model_meta_data, layer_type, net_dataidx_map, averaging_weights, args, device=device)
-    #hungarian_weights = load_weights("FedMA_no_comm")
-    #assignments_list = load_weights("FedMA_no_comm_assignments")
-    logger.info("BBP_MAP finished")
-    save_weights(hungarian_weights, "FedMA_no_comm_not_layerwise")
-    save_weights(assignments_list, "FedMA_no_comm_assignments_not_layerwise")
-    ## averaging models 
-    ## we need to switch to real FedAvg implementation 
-    ## FedAvg is originally proposed at: here: https://arxiv.org/abs/1602.05629
-    batch_weights = pdm_prepare_full_weights_cnn(nets_list, device=device)
-    #dataidxs = net_dataidx_map[args.rank]
-    total_data_points = sum([len(net_dataidx_map[r]) for r in range(args.n_nets)])
-    fed_avg_freqs = [len(net_dataidx_map[r]) / total_data_points for r in range(args.n_nets)]
-    logger.info("Total data points: {}".format(total_data_points))
-    logger.info("Freq of FedAvg: {}".format(fed_avg_freqs))
+    # this is for matching - BBP_MAP step
+    # _not_layerwise indicates that we use the simplified version of FedMA
 
-    logger.info("Start Averaging for FedAvg")
-    averaged_weights = []
-    num_layers = len(batch_weights[0])
-    for i in range(num_layers):
-        avegerated_weight = sum([b[i] * fed_avg_freqs[j] for j, b in enumerate(batch_weights)])
-        averaged_weights.append(avegerated_weight)
-    logger.info("Averaging for FedAvg finished")
-    for aw in averaged_weights:
-        logger.info(aw.shape)
+    # we can either match our models or load the matched parameters from previous runs
+    load_fedma_weights = True
+    if not load_fedma_weights:
+        logger.info("Start BBP_MAP")
+        hungarian_weights, assignments_list = BBP_MAP_not_layerwise(nets_list, model_meta_data, layer_type, net_dataidx_map, averaging_weights, args, device=device)
+        logger.info("BBP_MAP finished")
+        save_weights(hungarian_weights, "FedMA_no_comm_not_layerwise")
+        save_weights(assignments_list, "FedMA_no_comm_assignments_not_layerwise")
+    
+        ## averaging models 
+        ## we need to switch to real FedAvg implementation 
+        ## FedAvg is originally proposed at: here: https://arxiv.org/abs/1602.05629
+        batch_weights = pdm_prepare_full_weights_cnn(nets_list, device=device)
+        #dataidxs = net_dataidx_map[args.rank]
+        total_data_points = sum([len(net_dataidx_map[r]) for r in range(args.n_nets)])
+        fed_avg_freqs = [len(net_dataidx_map[r]) / total_data_points for r in range(args.n_nets)]
+        logger.info("Total data points: {}".format(total_data_points))
+        logger.info("Freq of FedAvg: {}".format(fed_avg_freqs))
 
-    save_weights(averaged_weights, "FedAvg_no_comm_not_layerwise")
+        logger.info("Start Averaging for FedAvg")
+        averaged_weights = []
+        num_layers = len(batch_weights[0])
+        for i in range(num_layers):
+            avegerated_weight = sum([b[i] * fed_avg_freqs[j] for j, b in enumerate(batch_weights)])
+            averaged_weights.append(avegerated_weight)
+        logger.info("Averaging for FedAvg finished")
+        for aw in averaged_weights:
+            logger.info(aw.shape)
+
+        save_weights(averaged_weights, "FedAvg_no_comm_not_layerwise")
+
+    else:
+        # load the weights
+        # for FedMA / hungarian weights you can either choose the weights without communication or 
+        # from with communication 
+        # Since the training of the models in the communication scenario for FedMA took too long ( over 3 days)
+        # we needed to save the parameters in between --> "Pre_FedMA_..."
+        # same goes for FedAvg
+        # assignments are only necessary if you are in the scenario without communication
+        # they are needed to align the parameters in the local models 
+        # saved parameters from the communication scenario are already aligned
+        hungarian_weights = load_weights("Pre_FedMA_comm_not_layerwise")
+        assignments_list = load_weights("FedMA_no_comm_assignments_not_layerwise")
+        averaged_weights = load_weights("Pre_FedAvg_comm")
 
     models = nets_list
+    # we analyze our models with the AUROC score
     # _ = compute_full_cnn_accuracy(models,
     #                            hungarian_weights,
     #                            train_dl_global,
@@ -3473,66 +3837,68 @@ if __name__ == "__main__":
     #                            n_classes,
     #                            device=device,
     #                            args=args)
-    
-    overall_train_auroc = 0
-    overall_test_auroc = 0
+    run_fedma_tests = False
+    if run_fedma_tests:
+        overall_train_auroc = 0
+        overall_test_auroc = 0
 
-    train_auroc_list, test_auroc_list = compute_local_model_auroc(models,
-                            hungarian_weights,
-                            assignments_list,
-                            net_dataidx_map,
-                            args_datadir,
-                            n_classes,
-                            device=device,
-                            args=args)
-
-    for i in range(args.n_nets):
-        overall_train_auroc += train_auroc_list[i]
-        overall_test_auroc += test_auroc_list[i]
-
-    overall_train_auroc = overall_train_auroc / args.n_nets
-    overall_test_auroc = overall_test_auroc / args.n_nets
-
-    logger.info("Average auroc score with matched weights on local training dataset: {}".format(overall_train_auroc))
-    logger.info("Average auroc score with matched weights on local test dataset: {}".format(overall_test_auroc))
-    logger.info("===================================================================")
-    overall_global_test_auroc = 0
-
-    global_test_auroc_list = compute_local_model_auroc_global_dataset(models,
-                            hungarian_weights,
-                            assignments_list,
-                            test_dl_global,
-                            args_datadir,
-                            n_classes,
-                            device=device,
-                            args=args)
-
-    for i in range(args.n_nets):
-        overall_global_test_auroc += global_test_auroc_list[i]
-
-    overall_global_test_auroc = overall_global_test_auroc / args.n_nets
-
-    logger.info("Average AUROC score with matched weights on global test dataset: {}".format(overall_global_test_auroc))
-
-    logger.info("===================================================================")
-    logger.info("Analyzing AUROC score of averaged weights (FedAvg)")
-    _ = compute_model_averaging_accuracy(models, 
-                                averaged_weights, 
-                                train_dl_global, 
-                                test_dl_global, 
+        train_auroc_list, test_auroc_list = compute_local_model_auroc(models,
+                                hungarian_weights,
+                                assignments_list,
+                                net_dataidx_map,
+                                args_datadir,
                                 n_classes,
-                                args, device = device)
+                                device=device,
+                                args=args)
 
-    # analyze(models_1 = models, global_weights_1 = averaged_weights, 
-    #         models_2 = models, global_weights_2 = hungarian_weights, args= args)
+        for i in range(args.n_nets):
+            overall_train_auroc += train_auroc_list[i]
+            overall_test_auroc += test_auroc_list[i]
 
+        overall_train_auroc = overall_train_auroc / args.n_nets
+        overall_test_auroc = overall_test_auroc / args.n_nets
+
+        logger.info("Average auroc score with matched weights on local training dataset: {}".format(overall_train_auroc))
+        logger.info("Average auroc score with matched weights on local test dataset: {}".format(overall_test_auroc))
+        logger.info("===================================================================")
+        overall_global_test_auroc = 0
+
+        global_test_auroc_list = compute_local_model_auroc_global_dataset(models,
+                                hungarian_weights,
+                                assignments_list,
+                                test_dl_global,
+                                args_datadir,
+                                n_classes,
+                                device=device,
+                                args=args)
+
+        for i in range(args.n_nets):
+            overall_global_test_auroc += global_test_auroc_list[i]
+
+        overall_global_test_auroc = overall_global_test_auroc / args.n_nets
+
+        logger.info("Average AUROC score with matched weights on global test dataset: {}".format(overall_global_test_auroc))
+
+    # uncomment to analyze FedAvg 
+    # logger.info("===================================================================")
+    # logger.info("Analyzing AUROC score of averaged weights (FedAvg)")
+    # _ = compute_model_averaging_accuracy(models, 
+    #                             averaged_weights, 
+    #                             train_dl_global, 
+    #                             test_dl_global, 
+    #                             n_classes,
+    #                             args, device = device)
+
+    # depending on the communication type selected in args.comm_type (from the shell script)
+    # either FedAvg or FedMA or both are retrained over the determined communication rounds (args.comm_round)
     if args.comm_type == "fedavg":
         ########################################################
         # baseline: FedAvg: https://arxiv.org/pdf/1602.05629.pdf
         ########################################################
         # we turn to enable communication here:
-        comm_init_batch_weights = [copy.deepcopy(averaged_weights) for _ in range(args.n_nets)]
-
+        # comm_init_batch_weights = [copy.deepcopy(averaged_weights) for _ in range(args.n_nets)]
+        comm_init_batch_weights = averaged_weights
+        logger.info("Start FedAvg with communication")
         global_weights = fedavg_comm(comm_init_batch_weights, model_meta_data, layer_type, 
                             net_dataidx_map, 
                             averaging_weights, args,
@@ -3540,12 +3906,14 @@ if __name__ == "__main__":
                             test_dl_global,
                             comm_round=args.comm_round,
                             device=device)
-        save_weights(global_weights, "FedAvg_comm")
+        logger.info("FedAvg with communication finished")
+        save_weights(global_weights, "FedAvg_comm_not_layerwise")
     
     elif args.comm_type == "fedma":
-        comm_init_batch_weights = [copy.deepcopy(hungarian_weights) for _ in range(args.n_nets)]
-
-        global_weights = fedma_comm(comm_init_batch_weights,
+        # comm_init_batch_weights = [copy.deepcopy(hungarian_weights) for _ in range(args.n_nets)]
+        comm_init_batch_weights = hungarian_weights
+        logger.info("Start FedMA with communication")
+        global_weights_fedma = fedma_comm_not_layerwise(comm_init_batch_weights,
                                  model_meta_data, layer_type, net_dataidx_map,
                                  averaging_weights, args,
                                  train_dl_global,
@@ -3553,7 +3921,9 @@ if __name__ == "__main__":
                                  assignments_list,
                                  comm_round=args.comm_round,
                                  device=device)
-        save_weights(global_weights, "FedMA_comm")
+        logger.info("FedMA with communication finished")
+        save_weights(global_weights_fedma, "FedMA_comm_not_layerwise")
+        # subprocess.run(["rsync", "-zvh", "trained_weightsFedMA_comm_not_layerwise", "/pfs/work7/workspace/scratch/sq8430-data_workspace/saved_weights/"])
 
     elif args.comm_type == "fedma_fedavg":
         comm_init_batch_weights = [copy.deepcopy(averaged_weights) for _ in range(args.n_nets)]
@@ -3569,7 +3939,8 @@ if __name__ == "__main__":
         logger.info("FedAvg with communication finished")
         save_weights(global_weights_fedavg, "FedAvg_comm_not_layerwise")
 
-        comm_init_batch_weights = [copy.deepcopy(hungarian_weights) for _ in range(args.n_nets)]
+        # comm_init_batch_weights = [copy.deepcopy(hungarian_weights) for _ in range(args.n_nets)]
+        comm_init_batch_weights = hungarian_weights
         logger.info("Start FedMA with communication")
         global_weights_fedma = fedma_comm_not_layerwise(comm_init_batch_weights,
                                  model_meta_data, layer_type, net_dataidx_map,

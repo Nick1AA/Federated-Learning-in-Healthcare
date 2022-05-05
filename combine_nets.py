@@ -10,6 +10,11 @@ logger = logging.getLogger("combine_nets")
 
 
 def prepare_weight_matrix(n_classes, weights: dict):
+    """
+    Creates a weight matrix from a dictionary
+
+    : weights: parameters to be formatted into a matrix
+    """
     weights_list = {}
 
     for net_i, cls_cnts in weights.items():
@@ -23,6 +28,14 @@ def prepare_weight_matrix(n_classes, weights: dict):
 
 
 def prepare_uniform_weights(n_classes, net_cnt, fill_val=1):
+    """
+    Creates a weight matrix containing only one value
+
+    : n_classes: number of classes - determines columns
+    : net_cnt: number of clients - determines rows
+    fill_val: value to be filled in the matrix
+    """
+
     weights_list = {}
 
     for net_i in range(net_cnt):
@@ -33,10 +46,20 @@ def prepare_uniform_weights(n_classes, net_cnt, fill_val=1):
 
 
 def prepare_sanity_weights(n_classes, net_cnt):
+    """
+    Creates a weight matrix containing only 0 values
+
+    : n_classes: number of classes - determines columns
+    : net_cnt: number of clients - determines rows
+    """
     return prepare_uniform_weights(n_classes, net_cnt, fill_val=0)
 
 
 def normalize_weights(weights):
+    """
+    normalizes the weights
+    """
+
     Z = np.array([])
     eps = 1e-6
     weights_norm = {}
@@ -54,6 +77,14 @@ def normalize_weights(weights):
 
 
 def get_weighted_average_pred(models: list, weights: dict, x, device="cpu"):
+    """
+    Returns the weighted output of a list of models on some data batch x
+
+    : models: list of models
+    : weights: weights to apply on the output
+    : x: batch
+    : device: device on which the computation takes place (cpu or gpu)
+    """
     out_weighted = None
 
     # Compute the predictions

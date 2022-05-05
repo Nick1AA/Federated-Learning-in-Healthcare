@@ -1,4 +1,4 @@
-""" muss angepasst werden, sobald feststeht welche Klassen für den CheXpert Datensatz relevant sind """
+""" original file, covering other NN architectures """ 
 
 import torch
 import torch.nn as nn

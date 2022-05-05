@@ -1,4 +1,5 @@
 """ taken from https://github.com/pytorch/vision/blob/main/torchvision/models/densenet.py """
+""" extended by a DenseNet-Container class that allows to create a DenseNet with a custom number of filters"""
 
 import re
 from collections import OrderedDict
@@ -534,6 +535,7 @@ class _TransitionContainer(nn.Sequential):
 class DenseNetContainer(nn.Module):
     r"""Densenet-BC model class, based on
     `"Densely Connected Convolutional Networks" <https://arxiv.org/pdf/1608.06993.pdf>`_.
+    Customized in a way that allows to insert custom number of filters
     Args:
         growth_rate (int) - how many filters to add each layer (`k` in paper)
         block_config (list of 4 ints) - how many layers in each pooling block

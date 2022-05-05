@@ -2902,7 +2902,7 @@ def BBP_MAP_not_layerwise_2(nets_list, model_meta_data, layer_type, net_dataidx_
     
     num_layers = len(batch_weights[0])
 
-    with open('./matching_weights_cache/matched_layerwise_weights', 'wb') as weights_file:
+    with open('matched_weights_not_layerwise_2_all_param', 'wb') as weights_file:
         pickle.dump(matched_weights, weights_file)
 
     last_layer_weights_collector = []
@@ -3255,6 +3255,7 @@ def fedma_comm_not_layerwise_2(batch_weights, model_meta_data, layer_type, net_d
         logger.info("Entering communication round: {} ...".format(cr))
         retrained_nets = []
         for worker_index in range(args.n_nets):
+            logger.info("Client {}".format(worker_index))
             dataidxs = net_dataidx_map[worker_index]
             train_dl_local, test_dl_local = get_dataloader(args.dataset, args_datadir, args.batch_size, 32, dataidxs)
 
@@ -3268,49 +3269,56 @@ def fedma_comm_not_layerwise_2(batch_weights, model_meta_data, layer_type, net_d
         # BBP_MAP step
         hungarian_weights, assignments_list = BBP_MAP_not_layerwise_2(retrained_nets, model_meta_data, layer_type, net_dataidx_map, averaging_weights, args, device=device)
 
-        logger.info("After retraining and rematching for comm. round: {}, we measure the accuracy ...".format(cr))
-        overall_train_auroc = 0
-        overall_test_auroc = 0
+        # logger.info("After retraining and rematching for comm. round: {}, we measure the accuracy ...".format(cr))
+        # overall_train_auroc = 0
+        # overall_test_auroc = 0
 
-        train_auroc_list, test_auroc_list = compute_local_model_auroc_2(models,
-                                hungarian_weights,
-                                assignments_list,
-                                net_dataidx_map,
-                                args_datadir,
-                                n_classes,
-                                device=device,
-                                args=args)
+        # train_auroc_list, test_auroc_list = compute_local_model_auroc_2(models,
+        #                         hungarian_weights,
+        #                         assignments_list,
+        #                         net_dataidx_map,
+        #                         args_datadir,
+        #                         n_classes,
+        #                         device=device,
+        #                         args=args)
 
-        for i in range(args.n_nets):
-            overall_train_auroc += train_auroc_list[i]
-            overall_test_auroc += test_auroc_list[i]
+        # for i in range(args.n_nets):
+        #     overall_train_auroc += train_auroc_list[i]
+        #     overall_test_auroc += test_auroc_list[i]
 
-        overall_train_auroc = overall_train_auroc / args.n_nets
-        overall_test_auroc = overall_test_auroc / args.n_nets
+        # overall_train_auroc = overall_train_auroc / args.n_nets
+        # overall_test_auroc = overall_test_auroc / args.n_nets
 
-        logger.info("Average auroc score with matched weights on local training dataset: {}".format(overall_train_auroc))
-        logger.info("Average auroc score with matched weights on local test dataset: {}".format(overall_test_auroc))
-        logger.info("===================================================================")
-        overall_global_test_auroc = 0
-
-        global_test_auroc_list = compute_local_model_auroc_global_dataset_2(models,
-                                hungarian_weights,
-                                assignments_list,
-                                test_dl_global,
-                                args_datadir,
-                                n_classes,
-                                device=device,
-                                args=args)
-
-        for i in range(args.n_nets):
-            overall_global_test_auroc += global_test_auroc_list[i]
-
-        overall_global_test_auroc = overall_global_test_auroc / args.n_nets
-
-        logger.info("Average AUROC score with matched weights on global test dataset: {}".format(overall_global_test_auroc))
-        logger.info("===================================================================")
+        # logger.info("Average auroc score with matched weights on local training dataset: {}".format(overall_train_auroc))
+        # logger.info("Average auroc score with matched weights on local test dataset: {}".format(overall_test_auroc))
+        
         batch_weights = copy.deepcopy(hungarian_weights)
         del hungarian_weights
+        if cr < 2:
+            adapted_weights = []
+            for worker_index in range(args.n_nets):
+                new_weights = match_global_to_local_weights_2(batch_weights, assignments_list, worker_index, not_layerwise=True )
+                adapted_weights.append(new_weights)
+            save_weights("Pre_FedMA_comm_not_layerwise_2_all_param")
+    logger.info("===================================================================")
+    overall_global_test_auroc = 0
+
+    global_test_auroc_list = compute_local_model_auroc_global_dataset_2(models,
+                            hungarian_weights,
+                            assignments_list,
+                            test_dl_global,
+                            args_datadir,
+                            n_classes,
+                            device=device,
+                            args=args)
+
+    for i in range(args.n_nets):
+        overall_global_test_auroc += global_test_auroc_list[i]
+
+    overall_global_test_auroc = overall_global_test_auroc / args.n_nets
+
+    logger.info("Average AUROC score with matched weights on global test dataset: {}".format(overall_global_test_auroc))
+    logger.info("===================================================================")
     adapted_weights = []
     for worker_index in range(args.n_nets):
         new_weights = match_global_to_local_weights_2(batch_weights, assignments_list, worker_index, not_layerwise=True )
@@ -3435,35 +3443,42 @@ if __name__ == "__main__":
                                    device=device,
                                    args=args)
 
-    # this is for PFNM
-    logger.info("Start BBP_MAP")
-    hungarian_weights, assignments_list = BBP_MAP_not_layerwise_2(nets_list, model_meta_data, layer_type, net_dataidx_map, averaging_weights, args, device=device)
-    #hungarian_weights = load_weights("FedMA_no_comm")
-    #assignments_list = load_weights("FedMA_no_comm_assignments")
-    logger.info("BBP_MAP finished")
-    save_weights(hungarian_weights, "FedMA_no_comm_not_layerwise_2_all_param")
-    save_weights(assignments_list, "FedMA_no_comm_assignments_not_layerwise_2_all_param")
-    ## averaging models 
-    ## we need to switch to real FedAvg implementation 
-    ## FedAvg is originally proposed at: here: https://arxiv.org/abs/1602.05629
-    batch_weights = pdm_prepare_full_weights_cnn(nets_list, device=device)
-    #dataidxs = net_dataidx_map[args.rank]
-    total_data_points = sum([len(net_dataidx_map[r]) for r in range(args.n_nets)])
-    fed_avg_freqs = [len(net_dataidx_map[r]) / total_data_points for r in range(args.n_nets)]
-    logger.info("Total data points: {}".format(total_data_points))
-    logger.info("Freq of FedAvg: {}".format(fed_avg_freqs))
+    load_fedma_weights = True
+    if not load_fedma_weights:
+        # this is for PFNM
+        logger.info("Start BBP_MAP")
+        hungarian_weights, assignments_list = BBP_MAP_not_layerwise_2(nets_list, model_meta_data, layer_type, net_dataidx_map, averaging_weights, args, device=device)
+        #hungarian_weights = load_weights("FedMA_no_comm")
+        #assignments_list = load_weights("FedMA_no_comm_assignments")
+        logger.info("BBP_MAP finished")
+        save_weights(hungarian_weights, "FedMA_no_comm_not_layerwise_2_all_param")
+        save_weights(assignments_list, "FedMA_no_comm_assignments_not_layerwise_2_all_param")
+        ## averaging models 
+        ## we need to switch to real FedAvg implementation 
+        ## FedAvg is originally proposed at: here: https://arxiv.org/abs/1602.05629
+        batch_weights = pdm_prepare_full_weights_cnn(nets_list, device=device)
+        #dataidxs = net_dataidx_map[args.rank]
+        total_data_points = sum([len(net_dataidx_map[r]) for r in range(args.n_nets)])
+        fed_avg_freqs = [len(net_dataidx_map[r]) / total_data_points for r in range(args.n_nets)]
+        logger.info("Total data points: {}".format(total_data_points))
+        logger.info("Freq of FedAvg: {}".format(fed_avg_freqs))
 
-    logger.info("Start Averaging for FedAvg")
-    averaged_weights = []
-    num_layers = len(batch_weights[0])
-    for i in range(num_layers):
-        avegerated_weight = sum([b[i] * fed_avg_freqs[j] for j, b in enumerate(batch_weights)])
-        averaged_weights.append(avegerated_weight)
-    logger.info("Averaging for FedAvg finished")
-    for aw in averaged_weights:
-        logger.info(aw.shape)
+        logger.info("Start Averaging for FedAvg")
+        averaged_weights = []
+        num_layers = len(batch_weights[0])
+        for i in range(num_layers):
+            avegerated_weight = sum([b[i] * fed_avg_freqs[j] for j, b in enumerate(batch_weights)])
+            averaged_weights.append(avegerated_weight)
+        logger.info("Averaging for FedAvg finished")
+        for aw in averaged_weights:
+            logger.info(aw.shape)
 
-    save_weights(averaged_weights, "FedAvg_no_comm__not_layerwise_2_all_param")
+        save_weights(averaged_weights, "FedAvg_no_comm__not_layerwise_2_all_param")
+
+    else:
+        hungarian_weights = load_weights("FedMA_no_comm_not_layerwise_2_all_param")
+        assignments_list = load_weights("FedMA_no_comm_assignments_not_layerwise_2_all_param")
+        averaged_weights = load_weights("FedAvg_no_comm_not_layerwise_2_all_param")
 
     models = nets_list
     # _ = compute_full_cnn_accuracy(models,
@@ -3474,28 +3489,30 @@ if __name__ == "__main__":
     #                            device=device,
     #                            args=args)
     
-    overall_train_auroc = 0
-    overall_test_auroc = 0
+    run_fedma_tests = False
+    if run_fedma_tests:
+        overall_train_auroc = 0
+        overall_test_auroc = 0
 
-    train_auroc_list, test_auroc_list = compute_local_model_auroc_2(models,
-                            hungarian_weights,
-                            assignments_list,
-                            net_dataidx_map,
-                            args_datadir,
-                            n_classes,
-                            device=device,
-                            args=args)
+        train_auroc_list, test_auroc_list = compute_local_model_auroc_2(models,
+                                hungarian_weights,
+                                assignments_list,
+                                net_dataidx_map,
+                                args_datadir,
+                                n_classes,
+                                device=device,
+                                args=args)
 
-    for i in range(args.n_nets):
-        overall_train_auroc += train_auroc_list[i]
-        overall_test_auroc += test_auroc_list[i]
+        for i in range(args.n_nets):
+            overall_train_auroc += train_auroc_list[i]
+            overall_test_auroc += test_auroc_list[i]
 
-    overall_train_auroc = overall_train_auroc / args.n_nets
-    overall_test_auroc = overall_test_auroc / args.n_nets
+        overall_train_auroc = overall_train_auroc / args.n_nets
+        overall_test_auroc = overall_test_auroc / args.n_nets
 
-    logger.info("Average auroc score with matched weights on local training dataset: {}".format(overall_train_auroc))
-    logger.info("Average auroc score with matched weights on local test dataset: {}".format(overall_test_auroc))
-    logger.info("===================================================================")
+        logger.info("Average auroc score with matched weights on local training dataset: {}".format(overall_train_auroc))
+        logger.info("Average auroc score with matched weights on local test dataset: {}".format(overall_test_auroc))
+        logger.info("===================================================================")
     overall_global_test_auroc = 0
 
     global_test_auroc_list = compute_local_model_auroc_global_dataset_2(models,
@@ -3515,13 +3532,13 @@ if __name__ == "__main__":
     logger.info("Average AUROC score with matched weights on global test dataset: {}".format(overall_global_test_auroc))
 
     logger.info("===================================================================")
-    logger.info("Analyzing AUROC score of averaged weights (FedAvg)")
-    _ = compute_model_averaging_accuracy(models, 
-                                averaged_weights, 
-                                train_dl_global, 
-                                test_dl_global, 
-                                n_classes,
-                                args, device = device)
+    # logger.info("Analyzing AUROC score of averaged weights (FedAvg)")
+    # _ = compute_model_averaging_accuracy(models, 
+    #                             averaged_weights, 
+    #                             train_dl_global, 
+    #                             test_dl_global, 
+    #                             n_classes,
+    #                             args, device = device)
 
     # analyze(models_1 = models, global_weights_1 = averaged_weights, 
     #         models_2 = models, global_weights_2 = hungarian_weights, args= args)
@@ -3544,8 +3561,8 @@ if __name__ == "__main__":
     
     elif args.comm_type == "fedma":
         comm_init_batch_weights = [copy.deepcopy(hungarian_weights) for _ in range(args.n_nets)]
-
-        global_weights = fedma_comm(comm_init_batch_weights,
+        logger.info("Start FedMA with communication")
+        global_weights = fedma_comm_not_layerwise_2(comm_init_batch_weights,
                                  model_meta_data, layer_type, net_dataidx_map,
                                  averaging_weights, args,
                                  train_dl_global,
@@ -3553,7 +3570,8 @@ if __name__ == "__main__":
                                  assignments_list,
                                  comm_round=args.comm_round,
                                  device=device)
-        save_weights(global_weights, "FedMA_comm")
+        logger.info("FedMA with communication finished")
+        save_weights(global_weights, "FedMA_comm_not_layerwise_2_all_param")
 
     elif args.comm_type == "fedma_fedavg":
         comm_init_batch_weights = [copy.deepcopy(averaged_weights) for _ in range(args.n_nets)]

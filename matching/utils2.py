@@ -1,4 +1,6 @@
 """ taken from https://github.com/pytorch/vision/blob/main/torchvision/models/densenet.py """
+""" similar to DenseNetContainer but without the fully connected layer at the end """
+""" we assume here that the custom filters comprise all layers """
 
 import re
 from collections import OrderedDict

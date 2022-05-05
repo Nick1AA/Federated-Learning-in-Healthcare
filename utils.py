@@ -1,4 +1,6 @@
-""" die in dieser Datei befindlichen Methoden und Klassen im Zusammenhang mit dem Datensatz dienen als Referenz und müsse noch angepasst werden """
+""" 
+-Contains methods for data preparation and processing
+-Contains methods for indexing and weight alignment """
 
 import math 
 import os
@@ -12,6 +14,7 @@ import torch.utils.data as data
 from sklearn.metrics import confusion_matrix, multilabel_confusion_matrix, roc_auc_score
 import io
 import time
+import subprocess
 
 # we've changed to a faster solver
 #from scipy.optimize import linear_sum_assignment
@@ -33,8 +36,12 @@ logging.basicConfig(format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(messa
                             datefmt='%H:%M:%S', level=logging.DEBUG)
 logger = logging.getLogger("utils")
 
-""" New Method """
+""" New Methods """
 def densenet_index(layer_index):
+    """
+    translates the layer index to the parameter index
+    Used for approach 1 and 2
+    """
     if layer_index <= 2:
         this_index = layer_index -1
     elif layer_index == 3:
@@ -51,6 +58,10 @@ def densenet_index(layer_index):
     return this_index
 
 def densenet_index_2(layer_index):
+    """
+    translates the layer index to the parameter index
+    Used for approach 3 and 4
+    """
     if layer_index <= 1:
         this_index = layer_index -1
     else:
@@ -59,6 +70,10 @@ def densenet_index_2(layer_index):
     return this_index
 
 def densenet_index_3(layer_index):
+    """
+    translates the layer index to the parameter index
+    Used for approach 5 and 6
+    """
     if layer_index <= 1:
         this_index = layer_index -1
     else:
@@ -67,6 +82,10 @@ def densenet_index_3(layer_index):
     return this_index
 
 def is_batchnorm(layer_index):
+    """
+    checks whether the layer is a batch normalization layer
+    Used for approach 1 and 2
+    """
     if layer_index == 2:
         return True
     elif (layer_index >= 3) and (layer_index % 2 == 1):
@@ -75,6 +94,10 @@ def is_batchnorm(layer_index):
         return False
 
 def densenet_index_to_layer(index):
+    """
+    translates the parameter index to the layer index
+    Used for approach 1 and 2
+    """
     #notice layer index starts here with 0 and above at 1
     if index <= 1:
         layer_index = index
@@ -92,6 +115,10 @@ def densenet_index_to_layer(index):
     return int(layer_index)
 
 def densenet_index_to_layer_2(index):
+    """
+    translates the parameter index to the layer index
+    Used for approach 3 and 4
+    """
     #notice layer index starts here with 0 and above at 1
     if index <= 5:
         layer_index = 0
@@ -105,6 +132,10 @@ def densenet_index_to_layer_2(index):
     return int(layer_index)
 
 def densenet_index_to_layer_3(index):
+    """
+    translates the parameter index to the layer index
+    Used for approach 5 and 6
+    """
     #notice layer index starts here with 0 and above at 1
     if index <= 10:
         layer_index = 0
@@ -118,6 +149,16 @@ def densenet_index_to_layer_3(index):
     return int(layer_index)
 
 def match_global_to_local_weights(hungarian_weights, assignments, client_index, not_layerwise = False):
+    """
+    Align the global parameters according to the assignments so that they can be used in the local model 
+    of the client with ID corresponding to the client_index
+    Used for approach 1 and 2
+
+    : hungarian_weights: FedMA weights
+    : assignments: Contains the assignments of the global to the local parameters for all clients
+    : client_index: client ID
+    : not_layerwise: whether the weights contain weights for each client or depict global weights
+    """
     
     dummy_model = densenet121()
     new_weights_list = []
@@ -177,6 +218,16 @@ def match_global_to_local_weights(hungarian_weights, assignments, client_index, 
     return new_weights_list
 
 def match_global_to_local_weights_2(hungarian_weights, assignments, client_index, not_layerwise = False):
+    """
+    Align the global parameters according to the assignments so that they can be used in the local model 
+    of the client with ID corresponding to the client_index
+    Used for approach 3 and 4
+
+    : hungarian_weights: FedMA weights
+    : assignments: Contains the assignments of the global to the local parameters for all clients
+    : client_index: client ID
+    : not_layerwise: whether the weights contain weights for each client or depict global weights
+    """
     
     dummy_model = densenet121()
     new_weights_list = []
@@ -236,6 +287,16 @@ def match_global_to_local_weights_2(hungarian_weights, assignments, client_index
     return new_weights_list
 
 def match_global_to_local_weights_3(hungarian_weights, assignments, client_index, not_layerwise = False):
+    """
+    Align the global parameters according to the assignments so that they can be used in the local model 
+    of the client with ID corresponding to the client_index
+    Used for approach 5 and 6
+
+    : hungarian_weights: FedMA weights
+    : assignments: Contains the assignments of the global to the local parameters for all clients
+    : client_index: client ID
+    : not_layerwise: whether the weights contain weights for each client or depict global weights
+    """
     
     dummy_model = densenet121()
     new_weights_list = []
@@ -320,6 +381,14 @@ def parse_class_dist(net_class_config):
     return cls_net_map
 
 def record_net_data_stats(y_train, net_dataidx_map, logdir, dataset="chexpert"):
+    """
+    Computes the class frequencies for each client
+
+    : y_train: data labels
+    : net_dataidx_map: List determining which data point belongs to which client
+    : logdir: log directory
+    : dataset: dataset to be used
+    """
 
     net_cls_counts = {}
 
@@ -343,7 +412,17 @@ def record_net_data_stats(y_train, net_dataidx_map, logdir, dataset="chexpert"):
     return net_cls_counts
 
 def partition_data(dataset, datadir, logdir, partition, n_nets, alpha, args):
+    """
+    Splits the data into subsets --> one subset to each client
 
+    : dataset: dataset to be used
+    : datadir: data directory
+    : logdir: log directory
+    : partition: partition type
+    : n_nets: number of clients
+    : alpha: parameter
+    : args: Parameters needed for the algorithm, determined in the shell script (e.g. args.n_nets - number of clients)
+    """
     if dataset == 'mnist':
         X_train, y_train, X_test, y_test = load_mnist_data(datadir)
         n_train = X_train.shape[0]
@@ -583,7 +662,7 @@ def handle_single_uncertainty_label(label):
     return label   
 
 def handle_NaN_values(labels):
-
+    # converts NaN values into 0s = negative
     for x in labels:
         for i in range(14):
             if math.isnan(x[i]):
@@ -591,7 +670,9 @@ def handle_NaN_values(labels):
     return labels  
 
 def compute_auroc(model, dataloader, device="cpu", dataset=None):
-
+    """
+    Computes the AUROC-score of the given model using the dataloader
+    """
     logger.info("Calculate auroc score")
     was_training = False
     if model.training:
@@ -600,16 +681,19 @@ def compute_auroc(model, dataloader, device="cpu", dataset=None):
 
     target =  np.array([])
     out =  np.array([])
+    #subprocess.run(["cd", "$TMP"])
     for batch_idx, (x, target_b) in enumerate(dataloader):
-            target_b = handle_uncertainty_labels(target_b)
-            target_b = handle_NaN_values(target_b)
-            # target_b = torch.tensor(target_b)
-            x, target_b = x.to(device), target_b.to(device)
-            out_b = model(x)
-            #logger.info(out_b)
-            target = np.append(target, target_b.tolist())
-            out = np.append(out, out_b.tolist())
-    
+        #subprocess.run(["cd", "/pfs/work7/workspace/scratch/sq8430-data_workspace/"])
+        target_b = handle_uncertainty_labels(target_b)
+        target_b = handle_NaN_values(target_b)
+        # target_b = torch.tensor(target_b)
+        x, target_b = x.to(device), target_b.to(device)
+        out_b = model(x)
+        #logger.info(out_b)
+        target = np.append(target, target_b.tolist())
+        out = np.append(out, out_b.tolist())
+        #subprocess.run(["cd", "$TMP"])
+    #subprocess.run(["cd", "/pfs/work7/workspace/scratch/sq8430-data_workspace/"])
     target = np.reshape(target, (-1, 14))
     out = np.reshape(out, (-1, 14))
     logger.info("Exemplary target values for one entry")
@@ -627,7 +711,9 @@ def compute_auroc(model, dataloader, device="cpu", dataset=None):
     return auroc
 
 def compute_accuracy(model, dataloader, get_confusion_matrix=False, device="cpu", dataset=None):
-
+    """
+    Computes the accuracy of the given model using the dataloader
+    """
     was_training = False
     if model.training:
         model.eval()
@@ -721,7 +807,7 @@ def init_cnns(net_configs, n_nets):
 
 def init_models(net_configs, n_nets, args):
     '''
-    Initialize the local LeNets
+    Initialize the local LeNets and other architectures
     Please note that this part is hard coded right now
     '''
     from model2 import densenet121
@@ -808,7 +894,15 @@ def load_model_from_folder(folder, model, model_index, rank=0, device="cpu"):
     return model
 
 def get_dataloader(dataset, datadir, train_bs, test_bs, dataidxs=None):
+    """
+    Creates dataloaders for the given dataset, one for training and one for testing
 
+    : dataset: dataset to ne used
+    : datadir: data directory
+    : train_bs: train batch size
+    : test_bs: test batch size
+    : dataidxs: defines the datapoints to be used
+    """
     if dataset in ('mnist', 'cifar10'):
         if dataset == 'mnist':
             dl_obj = MNIST_truncated
@@ -932,6 +1026,9 @@ def pdm_prepare_full_weights_cnn(nets, device="cpu"):
     return weights
 
 def pdm_prepare_freq(cls_freqs, n_classes):
+    """
+    computes the overall class frequencies
+    """
     freqs = []
 
     for net_i in range(len(cls_freqs)):
@@ -946,7 +1043,18 @@ def pdm_prepare_freq(cls_freqs, n_classes):
     return freqs
 
 def compute_ensemble_auroc(models: list, dataloader, n_classes, train_cls_counts=None, uniform_weights=False, sanity_weights=False, device="cpu", dataset = None):
+    """
+    computes the AUROC-score across the different models
 
+    : models: local models
+    : dataloader: dataloader
+    : n_classes: number of classes
+    : train_cls_counts: class frequency
+    : uniform_weights: whether to use uniform weights
+    : sanity_weights: whether to use sanity weights
+    : device: Device on which the computation is performed (gpu or cpu)
+    : dataset: dataset to be used
+    """
     was_training = [False]*len(models)
     for i, model in enumerate(models):
         if model.training:
@@ -986,6 +1094,18 @@ def compute_ensemble_auroc(models: list, dataloader, n_classes, train_cls_counts
     return auroc
 
 def compute_ensemble_accuracy(models: list, dataloader, n_classes, train_cls_counts=None, uniform_weights=False, sanity_weights=False, device="cpu", dataset = None):
+    """
+    computes the accuracy across the different models
+
+    : models: local models
+    : dataloader: dataloader
+    : n_classes: number of classes
+    : train_cls_counts: class frequency
+    : uniform_weights: whether to use uniform weights
+    : sanity_weights: whether to use sanity weights
+    : device: Device on which the computation is performed (gpu or cpu)
+    : dataset: dataset to be used
+    """
 
     correct, total = 0, 0
     true_labels_list, pred_labels_list = np.array([]), np.array([])

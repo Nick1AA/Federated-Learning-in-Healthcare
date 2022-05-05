@@ -1,4 +1,4 @@
-""" auch hier ist noch abzuklären wie relevant die Klassen auf dem Datensatz sind """
+""" original file, covering other NN architectures """
 
 import logging
 
