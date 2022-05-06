@@ -76,10 +76,11 @@ if __name__ == "__main__":
 
     target = np.reshape(target, (-1, 14))
     out = np.reshape(out, (-1, 14))
-
+    target = np.delete(target, 12, axis = 1)
+    out = np.delete(out, 12, axis = 1)
     auroc = metrics.roc_auc_score(target, out)
     logger.info("The global model with weights from FedAvg without communication has a total AUROC of: " + auroc)
-
+    # remove class fracture since it does not occur
     observation_classes = [
         "No Finding",
         "Enlarged Cardiomediastinum",
@@ -93,7 +94,6 @@ if __name__ == "__main__":
         "Pneumothorax",
         "Pleural Effusion",
         "Pleural Other",
-        "Fracture",
         "Support Devices"]
 
     roc_auc = [[] for i in range(len(observation_classes))]
@@ -129,7 +129,8 @@ if __name__ == "__main__":
 
     target = [[] for i in range(16)]
     out = [[] for i in range(16)]
-    
+    auroc = 0.0
+    roc_auc = [0.0 for _ in range(13)]
     for worker_index in range(16):
         for batch_idx, (x, target_b) in enumerate(validation_dl):
                 # target_b = handle_uncertainty_labels(target_b)
@@ -143,16 +144,25 @@ if __name__ == "__main__":
 
         target[worker_index] = np.reshape(target[worker_index], (-1, 14))
         out[worker_index] = np.reshape(out[worker_index], (-1, 14))
-
-        auroc = metrics.roc_auc_score(target[worker_index], out[worker_index])
-        logger.info("The local model {} with weights from FedMA without communication has a total AUROC of: {}".format(worker_index, auroc))
+        target[worker_index] = np.delete(target[worker_index], 12, axis = 1)
+        out[worker_index] = np.delete(out[worker_index], 12, axis = 1)
+        auroc_local = metrics.roc_auc_score(target[worker_index], out[worker_index])
+        logger.info("The local model {} with weights from FedMA without communication has a total AUROC of: {}".format(worker_index, auroc_local))
         logger.info("-------------------------------------------------------------------------------------------------")
-        roc_auc = [[] for i in range(len(observation_classes))]
+        roc_auc_local = [[] for i in range(len(observation_classes))]
+        auroc += auroc_local
         for i in range(len(observation_classes)):
-            roc_auc[i] = metrics.roc_auc_score(target[worker_index][:, i], out[worker_index][:, i])
-            logger.info("This is the AUROC-score of model {} for observation class '{}': {}".format(worker_index, observation_classes[i], roc_auc[i]))
+            roc_auc_local[i] = metrics.roc_auc_score(target[worker_index][:, i], out[worker_index][:, i])
+            roc_auc[i] += roc_auc_local[i]
+            logger.info("This is the AUROC-score of model {} for observation class '{}': {}".format(worker_index, observation_classes[i], roc_auc_local[i]))
         logger.info("================================================================================================")
 
+    auroc /= 16
+    logger.info("Average AUROC score for FedMA without communication: {}".format(auroc))
+    for i in range(13):
+        roc_auc[i] /= 16.0
+        logger.info("Average AUROC score for FedMA without communication for observation class {}: {}".format(observation_classes[i], roc_auc[i]))
+    logger.info("================================================================================================")
     logger.info("Continuing with the weights resulting from communication")
     logger.info("Starting with FedAvg")
     new_state_dict = {}
@@ -191,7 +201,8 @@ if __name__ == "__main__":
 
     target = np.reshape(target, (-1, 14))
     out = np.reshape(out, (-1, 14))
-
+    target = np.delete(target, 12, axis = 1)
+    out = np.delete(out, 12, axis = 1)
     auroc = metrics.roc_auc_score(target, out)
     logger.info("The global model with weights from FedAvg with communication has a total AUROC of: " + auroc)
     logger.info("-------------------------------------------------------------------------------------------------")
@@ -206,6 +217,8 @@ if __name__ == "__main__":
     global_model_FedMA_comm = [densenet121() for i in range (16)]
 
     # continuing with FedMA weights with communication
+    auroc = 0.0
+    roc_auc = [0.0 for _ in range(13)]
     for worker_index in range(16):
         new_state_dict = {}
         for param_idx, (key_name, param) in enumerate(global_model_FedMA_comm.state_dict().items()):
@@ -244,12 +257,22 @@ if __name__ == "__main__":
         target[worker_index] = np.reshape(target[worker_index], (-1, 14))
         out[worker_index] = np.reshape(out[worker_index], (-1, 14))
 
-        auroc = metrics.roc_auc_score(target[worker_index], out[worker_index])
-        logger.info("The local model {} with weights from FedMA with communication has a total AUROC of: {}".format(worker_index, auroc))
+        target[worker_index] = np.delete(target[worker_index], 12, axis = 1)
+        out[worker_index] = np.delete(out[worker_index], 12, axis = 1)
+        auroc_local = metrics.roc_auc_score(target[worker_index], out[worker_index])
+        auroc += auroc_local
+        logger.info("The local model {} with weights from FedMA with communication has a total AUROC of: {}".format(worker_index, auroc_local))
         logger.info("-------------------------------------------------------------------------------------------------")
         
-        roc_auc = [[] for i in range(len(observation_classes))]
+        roc_auc_local = [[] for i in range(len(observation_classes))]
         for i in range(len(observation_classes)):
-            roc_auc[i] = metrics.roc_auc_score(target[worker_index][:, i], out[worker_index][:, i])
+            roc_auc_local[i] = metrics.roc_auc_score(target[worker_index][:, i], out[worker_index][:, i])
+            roc_auc[i] += roc_auc_local[i]
             logger.info("This is the AUROC-score of model {} for observation class '{}': {}".format(worker_index, observation_classes[i], roc_auc[i]))
         logger.info("================================================================================================")
+    auroc /= 16
+    logger.info("Average AUROC score for FedMA with communication: {}".format(auroc))
+    for i in range(13):
+        roc_auc[i] /= 16
+        logger.info("Average AUROC score for FedMA with communication for observation class {}: {}".format(obs_classes[i], roc_auc[i]))
+    logger.info("================================================================================================")
