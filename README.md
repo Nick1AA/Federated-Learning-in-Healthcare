@@ -28,7 +28,7 @@ A diagram summarizing the structure and dependencies between the files can be fo
 * Activate the _FedMA-CheXpert_ environment
 
 ## Run the code:
-Depending on which scenario you want to run a different shell script needs to be executed.
+Depending on which scenario you want to run a different shell script needs to be executed. If you want to load trained weights or train the models from scratch minor adaptions to the _main.py_ file and the shell script of the corresponding approach might be necessary.
 * Matching batch normalization layers on their own wherby
     * All parameters of the batchnorm layer are considered: execute *run.sh* 
     * Only the weight and bias of the batchnorm layer are considered: execute *run_all_param.sh* 
