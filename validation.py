@@ -19,7 +19,7 @@ if __name__ == "__main__":
     logger.info("Approach: {}".format(approach))
 
     fedavg_weights_no_comm = load_weights("FedAvg_no_comm" + str(approach))
-    fedavg_weights_comm = load_weights("FedAvg_comm")
+    fedavg_weights_comm = load_weights("FedAvg_comm" + str(approach))
 
     fedma_weights_no_comm_help = load_weights("FedMA_no_comm" + str(approach))
     assignments = load_weights("FedMA_no_comm_assignments" + str(approach))
@@ -28,7 +28,7 @@ if __name__ == "__main__":
     for i in range(16):
         fedma_weights_no_comm[i] = match_global_to_local_weights(fedma_weights_no_comm_help, assignments, i, not_layerwise = True) 
         
-    fedma_weights_comm = load_weights("FedMA_comm" + str(approach))
+    fedma_weights_comm = load_weights("Pre_FedMA_comm" + str(approach))
 
     logger.info("Create a typical densenet121 architecture for FedAvg")
     global_model_FedAvg = densenet121()
@@ -79,7 +79,7 @@ if __name__ == "__main__":
     target = np.delete(target, 12, axis = 1)
     out = np.delete(out, 12, axis = 1)
     auroc = metrics.roc_auc_score(target, out)
-    logger.info("The global model with weights from FedAvg without communication has a total AUROC of: " + auroc)
+    logger.info("The global model with weights from FedAvg without communication has a total AUROC of: {}".format(auroc))
     # remove class fracture since it does not occur
     observation_classes = [
         "No Finding",
@@ -108,7 +108,7 @@ if __name__ == "__main__":
     # continuing with FedMA weights without communication
     for worker_index in range(16):
         new_state_dict = {}
-        for param_idx, (key_name, param) in enumerate(global_model_FedMA_no_comm.state_dict().items()):
+        for param_idx, (key_name, param) in enumerate(global_model_FedMA_no_comm[worker_index].state_dict().items()):
             if "num_batches_tracked" in key_name:
                 continue
             if "conv" in key_name:
@@ -204,7 +204,7 @@ if __name__ == "__main__":
     target = np.delete(target, 12, axis = 1)
     out = np.delete(out, 12, axis = 1)
     auroc = metrics.roc_auc_score(target, out)
-    logger.info("The global model with weights from FedAvg with communication has a total AUROC of: " + auroc)
+    logger.info("The global model with weights from FedAvg with communication has a total AUROC of: {}".format(auroc))
     logger.info("-------------------------------------------------------------------------------------------------")
 
     roc_auc = [[] for i in range(len(observation_classes))]
@@ -221,7 +221,7 @@ if __name__ == "__main__":
     roc_auc = [0.0 for _ in range(13)]
     for worker_index in range(16):
         new_state_dict = {}
-        for param_idx, (key_name, param) in enumerate(global_model_FedMA_comm.state_dict().items()):
+        for param_idx, (key_name, param) in enumerate(global_model_FedMA_comm[worker_index].state_dict().items()):
             if "num_batches_tracked" in key_name:
                 continue
             if "conv" in key_name:
@@ -274,5 +274,5 @@ if __name__ == "__main__":
     logger.info("Average AUROC score for FedMA with communication: {}".format(auroc))
     for i in range(13):
         roc_auc[i] /= 16
-        logger.info("Average AUROC score for FedMA with communication for observation class {}: {}".format(obs_classes[i], roc_auc[i]))
+        logger.info("Average AUROC score for FedMA with communication for observation class {}: {}".format(observation_classes[i], roc_auc[i]))
     logger.info("================================================================================================")

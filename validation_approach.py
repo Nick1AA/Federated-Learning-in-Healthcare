@@ -16,7 +16,7 @@ if __name__ == "__main__":
     args_datadir = "./data/CheXpert-v1.0-small/"
     logger.info("Begin loading the weights")
     """ This needs to be adapted !!! """
-    approach = "_not_layerwise"
+    approach = "_not_layerwise_3"
     """ This needs to be adapted !!! """
     logger.info("Approach: {}".format(approach))
 
@@ -26,7 +26,7 @@ if __name__ == "__main__":
     fedma_weights_no_comm =[[] for i in range(16)]
     for i in range(16):
         """ This needs to be adapted !!! """
-        fedma_weights_no_comm[i] = match_global_to_local_weights(fedma_weights_no_comm_help, assignments, i, not_layerwise = True) 
+        fedma_weights_no_comm[i] = match_global_to_local_weights_3(fedma_weights_no_comm_help, assignments, i, not_layerwise = True) 
         """ This needs to be adapted !!! """
         
     fedma_weights_comm = load_weights("Pre_FedMA_comm" + str(approach))
